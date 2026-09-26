@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Minha IA 🤖</title>
+
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+<body>
+
+    <!-- ========================= -->
+    <!-- TELA DE LOGIN -->
+    <!-- ========================= -->
+
+    <div id="loginTela" class="login-container">
+
+        <div class="login-box">
+
+            <h1>🤖 Minha IA</h1>
+
+            <p>Entre na sua conta</p>
+
+            <form id="loginForm">
+
+                <input
+                    id="loginUsuario"
+                    type="text"
+                    placeholder="Usuário"
+                    required
+                >
+
+                <input
+                    id="loginSenha"
+                    type="password"
+                    placeholder="Senha"
+                    required
+                >
+
+                <button type="submit">
+                    Entrar
+                </button>
+
+            </form>
+
+
+            <hr>
+
+
+            <h2>Criar conta</h2>
+
+            <form id="cadastroForm">
+
+                <input
+                    id="cadastroUsuario"
+                    type="text"
+                    placeholder="Novo usuário"
+                    required
+                >
+
+                <input
+                    id="cadastroSenha"
+                    type="password"
+                    placeholder="Nova senha"
+                    required
+                >
+
+                <button type="submit">
+                    Criar conta
+                </button>
+
+            </form>
+
+        </div>
+
+    </div>
+
+
+    <!-- ========================= -->
+    <!-- APLICATIVO -->
+    <!-- ========================= -->
+
+    <div id="appTela" class="app-container" style="display: none;">
+
+        <!-- MENU LATERAL -->
+
+        <aside class="sidebar">
+
+            <h2>🤖 Minha IA</h2>
+
+            <button id="btnNovaConversa">
+                ➕ Nova conversa
+            </button>
+
+            <button id="btnTema">
+                🌙 Tema
+            </button>
+
+            <label class="upload-button">
+
+                📄 Enviar PDF
+
+                <input
+                    id="uploadPdf"
+                    type="file"
+                    accept=".pdf"
+                    hidden
+                >
+
+            </label>
+
+
+            <h3>Conversas</h3>
+
+            <div id="listaConversas"></div>
+
+
+            <button id="btnLogout">
+                🚪 Sair
+            </button>
+
+        </aside>
+
+
+        <!-- CHAT -->
+
+        <main class="chat-container">
+
+            <header class="chat-header">
+
+                <h1>🤖 Minha IA</h1>
+
+            </header>
+
+
+            <div id="chat" class="chat"></div>
+
+
+            <div class="entrada">
+
+                <input
+                    id="pergunta"
+                    type="text"
+                    placeholder="Digite sua pergunta..."
+                    autocomplete="off"
+                >
+
+                <button id="btnEnviar">
+                    Enviar
+                </button>
+
+            </div>
+
+        </main>
+
+    </div>
+
+
+    <!-- MARKDOWN -->
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+    <!-- NOSSO JAVASCRIPT -->
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+
+</body>
+
+</html>
