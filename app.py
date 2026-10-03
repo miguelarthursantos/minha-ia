@@ -1,8 +1,12 @@
+
 import os
 import re
 import sqlite3
 import uuid
 import unicodedata
+import hashlib
+import threading
+from collections import OrderedDict
 
 from datetime import datetime
 from functools import wraps
@@ -47,6 +51,92 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
 # =========================================================
+# CACHE DE CONSULTAS
+# =========================================================
+
+CACHE_MAXIMO = 128
+CACHE_TTL = 600
+
+_cache_consultas = OrderedDict()
+_cache_lock = threading.Lock()
+
+
+def _cache_chave(pergunta, documentos):
+
+    partes = [
+        normalizar_texto(pergunta)
+    ]
+
+    for documento in documentos:
+
+        try:
+            identificador = str(documento["id"])
+        except (KeyError, IndexError):
+            identificador = str(documento["nome"])
+
+        texto = documento["texto"] or ""
+
+        assinatura = hashlib.sha256(
+            texto.encode("utf-8", errors="ignore")
+        ).hexdigest()[:16]
+
+        partes.append(
+            identificador + ":" + assinatura
+        )
+
+    return "|".join(partes)
+
+
+def limpar_cache_consultas():
+
+    with _cache_lock:
+        _cache_consultas.clear()
+
+    print("CACHE DE CONSULTAS LIMPO.", flush=True)
+
+
+def buscar_cache_consulta(chave):
+
+    agora = datetime.now().timestamp()
+
+    with _cache_lock:
+
+        item = _cache_consultas.get(chave)
+
+        if item is None:
+            return None
+
+        criado_em, valor = item
+
+        if agora - criado_em > CACHE_TTL:
+
+            _cache_consultas.pop(chave, None)
+            return None
+
+        _cache_consultas.move_to_end(chave)
+
+        return [dict(trecho) for trecho in valor]
+
+
+def salvar_cache_consulta(chave, valor):
+
+    agora = datetime.now().timestamp()
+
+    with _cache_lock:
+
+        _cache_consultas[chave] = (
+            agora,
+            [dict(trecho) for trecho in valor]
+        )
+
+        _cache_consultas.move_to_end(chave)
+
+        while len(_cache_consultas) > CACHE_MAXIMO:
+            _cache_consultas.popitem(last=False)
+
+
+
+# =========================================================
 # BANCO DE DADOS
 # =========================================================
 
@@ -63,7 +153,10 @@ def criar_banco():
 
     conexao = conectar()
 
+    # -----------------------------------------------------
     # USUÁRIOS
+    # -----------------------------------------------------
+
     conexao.execute("""
         CREATE TABLE IF NOT EXISTS usuarios (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,7 +165,56 @@ def criar_banco():
         )
     """)
 
+    colunas_usuarios = conexao.execute(
+        "PRAGMA table_info(usuarios)"
+    ).fetchall()
+
+    nomes_colunas_usuarios = {
+        coluna["name"] for coluna in colunas_usuarios
+    }
+
+    if "email" not in nomes_colunas_usuarios:
+        conexao.execute("ALTER TABLE usuarios ADD COLUMN email TEXT")
+
+
+    # -----------------------------------------------------
+    # PROJETOS
+    # -----------------------------------------------------
+
+    conexao.execute("""
+        CREATE TABLE IF NOT EXISTS projetos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario_id INTEGER NOT NULL,
+            nome TEXT NOT NULL,
+            descricao TEXT,
+            icone TEXT,
+            criada_em TEXT,
+            atualizada_em TEXT
+        )
+    """)
+
+    # -----------------------------------------------------
+    # SITES CRIADOS PELO USUÁRIO
+    # -----------------------------------------------------
+
+    conexao.execute("""
+        CREATE TABLE IF NOT EXISTS sites (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario_id INTEGER NOT NULL,
+            nome TEXT NOT NULL,
+            prompt TEXT,
+            html TEXT,
+            css TEXT,
+            js TEXT,
+            criada_em TEXT,
+            atualizada_em TEXT
+        )
+    """)
+
+    # -----------------------------------------------------
     # CONVERSAS
+    # -----------------------------------------------------
+
     conexao.execute("""
         CREATE TABLE IF NOT EXISTS conversas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,7 +224,33 @@ def criar_banco():
         )
     """)
 
+
+    # -----------------------------------------------------
+    # MIGRAÇÃO:
+    # ADICIONAR PROJETO ÀS CONVERSAS
+    # -----------------------------------------------------
+
+    colunas_conversas = conexao.execute(
+        "PRAGMA table_info(conversas)"
+    ).fetchall()
+
+    nomes_colunas_conversas = {
+        coluna["name"]
+        for coluna in colunas_conversas
+    }
+
+    if "projeto_id" not in nomes_colunas_conversas:
+
+        conexao.execute("""
+            ALTER TABLE conversas
+            ADD COLUMN projeto_id INTEGER
+        """)
+
+
+    # -----------------------------------------------------
     # MENSAGENS
+    # -----------------------------------------------------
+
     conexao.execute("""
         CREATE TABLE IF NOT EXISTS mensagens (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,7 +261,11 @@ def criar_banco():
         )
     """)
 
+
+    # -----------------------------------------------------
     # MEMÓRIA
+    # -----------------------------------------------------
+
     conexao.execute("""
         CREATE TABLE IF NOT EXISTS memoria (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -102,7 +274,11 @@ def criar_banco():
         )
     """)
 
+
+    # -----------------------------------------------------
     # DOCUMENTOS
+    # -----------------------------------------------------
+
     conexao.execute("""
         CREATE TABLE IF NOT EXISTS documentos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,9 +286,33 @@ def criar_banco():
             nome TEXT NOT NULL,
             caminho TEXT NOT NULL,
             texto TEXT,
-            enviado_em TEXT
+            enviado_em TEXT,
+            projeto_id INTEGER
         )
     """)
+
+
+    # -----------------------------------------------------
+    # MIGRAÇÃO:
+    # ADICIONAR PROJETO AOS DOCUMENTOS
+    # -----------------------------------------------------
+
+    colunas_documentos = conexao.execute(
+        "PRAGMA table_info(documentos)"
+    ).fetchall()
+
+    nomes_colunas_documentos = {
+        coluna["name"]
+        for coluna in colunas_documentos
+    }
+
+    if "projeto_id" not in nomes_colunas_documentos:
+
+        conexao.execute("""
+            ALTER TABLE documentos
+            ADD COLUMN projeto_id INTEGER
+        """)
+
 
     conexao.commit()
 
@@ -136,6 +336,13 @@ ia = pipeline(
 
 print("IA carregada!")
 
+# O modelo pode trazer max_length=20 no generation_config.
+# Usamos somente max_new_tokens para evitar conflito e respostas truncadas.
+try:
+    ia.model.generation_config.max_length = None
+except Exception:
+    pass
+
 
 # =========================================================
 # LOGIN OBRIGATÓRIO
@@ -158,7 +365,7 @@ def login_obrigatorio(funcao):
 
 
 # =========================================================
-# MEMÓRIA
+# MEMÓRIA INTELIGENTE
 # =========================================================
 
 def pegar_memoria():
@@ -184,6 +391,359 @@ def pegar_memoria():
         item["informacao"]
         for item in memoria
     ]
+
+
+def adicionar_memoria(informacao):
+
+    if "usuario_id" not in session:
+        return False
+
+    informacao = str(informacao).strip()
+
+    if not informacao:
+        return False
+
+    if len(informacao) > 500:
+        informacao = informacao[:500].strip()
+
+    conexao = conectar()
+
+    memorias = conexao.execute(
+        """
+        SELECT informacao
+        FROM memoria
+        WHERE usuario_id = ?
+        """,
+        (session["usuario_id"],)
+    ).fetchall()
+
+    informacao_normalizada = normalizar_texto(informacao)
+
+    for memoria in memorias:
+
+        if normalizar_texto(memoria["informacao"]) == informacao_normalizada:
+
+            conexao.close()
+            return False
+
+    conexao.execute(
+        """
+        INSERT INTO memoria
+        (usuario_id, informacao)
+        VALUES (?, ?)
+        """,
+        (session["usuario_id"], informacao)
+    )
+
+    conexao.commit()
+    conexao.close()
+
+    return True
+
+
+def encontrar_memoria_por_texto(texto):
+
+    if "usuario_id" not in session:
+        return []
+
+    palavras = palavras_importantes(texto)
+
+    if not palavras:
+        return []
+
+    conexao = conectar()
+
+    memorias = conexao.execute(
+        """
+        SELECT id, informacao
+        FROM memoria
+        WHERE usuario_id = ?
+        ORDER BY id DESC
+        """,
+        (session["usuario_id"],)
+    ).fetchall()
+
+    conexao.close()
+
+    resultados = []
+
+    for memoria in memorias:
+
+        memoria_normalizada = normalizar_texto(memoria["informacao"])
+        pontos = 0
+
+        for palavra in palavras:
+            if palavra in memoria_normalizada:
+                pontos += 1
+
+        if pontos > 0:
+            resultados.append({
+                "id": memoria["id"],
+                "informacao": memoria["informacao"],
+                "pontos": pontos
+            })
+
+    resultados.sort(
+        key=lambda item: item["pontos"],
+        reverse=True
+    )
+
+    return resultados
+
+
+def apagar_memoria_por_texto(texto):
+
+    if "usuario_id" not in session:
+        return []
+
+    resultados = encontrar_memoria_por_texto(texto)
+
+    if not resultados:
+        return []
+
+    maior_pontuacao = resultados[0]["pontos"]
+
+    selecionadas = [
+        item for item in resultados
+        if item["pontos"] == maior_pontuacao
+    ]
+
+    conexao = conectar()
+
+    for memoria in selecionadas:
+        conexao.execute(
+            """
+            DELETE FROM memoria
+            WHERE id = ?
+            AND usuario_id = ?
+            """,
+            (memoria["id"], session["usuario_id"])
+        )
+
+    conexao.commit()
+    conexao.close()
+
+    return [
+        item["informacao"]
+        for item in selecionadas
+    ]
+
+
+def identificar_comando_memoria(pergunta):
+
+    texto = pergunta.strip()
+    texto_normalizado = normalizar_texto(texto)
+
+    comandos_salvar = [
+        "lembre que",
+        "lembra que",
+        "memorize que",
+        "guarde que",
+        "guarda que",
+        "anote que",
+        "anota que"
+    ]
+
+    for comando in comandos_salvar:
+
+        comando_normalizado = normalizar_texto(comando)
+
+        if texto_normalizado.startswith(comando_normalizado):
+
+            informacao = texto[len(comando):].strip()
+
+            if informacao:
+                return {
+                    "tipo": "salvar",
+                    "informacao": informacao
+                }
+
+    comandos_apagar = [
+        "esqueça que",
+        "esquece que",
+        "apague a memória sobre",
+        "apaga a memória sobre",
+        "delete a memória sobre",
+        "deleta a memória sobre",
+        "esqueça",
+        "esquece"
+    ]
+
+    for comando in comandos_apagar:
+
+        comando_normalizado = normalizar_texto(comando)
+
+        if texto_normalizado.startswith(comando_normalizado):
+
+            informacao = texto[len(comando):].strip()
+
+            if informacao:
+                return {
+                    "tipo": "apagar",
+                    "informacao": informacao
+                }
+
+    perguntas_memoria = [
+        "o que voce lembra de mim",
+        "o que voce sabe sobre mim",
+        "o que voce lembra sobre mim",
+        "quais sao minhas memorias",
+        "quais sao as minhas memorias",
+        "mostre minhas memorias",
+        "mostra minhas memorias",
+        "liste minhas memorias",
+        "lista minhas memorias",
+        "o que esta salvo sobre mim"
+    ]
+
+    for pergunta_memoria in perguntas_memoria:
+
+        if texto_normalizado == pergunta_memoria:
+            return {"tipo": "listar"}
+
+    return {"tipo": None}
+
+
+
+def extrair_memorias_automaticas(texto):
+
+    """
+    Identifica frases simples que representam informações
+    pessoais úteis e explícitas fornecidas pelo usuário.
+
+    A função é propositalmente conservadora: ela não tenta
+    interpretar qualquer frase como memória.
+    """
+
+    import re
+
+    texto_original = str(texto).strip()
+    texto_normalizado = normalizar_texto(texto_original)
+
+    if not texto_original:
+        return []
+
+    # Não salvar comandos explícitos aqui. Eles já são tratados
+    # separadamente por identificar_comando_memoria().
+    if identificar_comando_memoria(texto_original)["tipo"]:
+        return []
+
+    padroes = [
+        # Nome
+        r"\bmeu nome é (.+?)(?:[.!?]|$)",
+        r"\beu me chamo (.+?)(?:[.!?]|$)",
+        r"\bmeu nome e (.+?)(?:[.!?]|$)",
+
+        # Idade
+        r"\beu tenho (\d{1,3}) anos(?:[.!?]|$)",
+        r"\btenho (\d{1,3}) anos(?:[.!?]|$)",
+
+        # Estudos / escola
+        r"\beu estudo no (.+?)(?:[.!?]|$)",
+        r"\beu estudo na (.+?)(?:[.!?]|$)",
+        r"\bestudo no (.+?)(?:[.!?]|$)",
+        r"\bestudo na (.+?)(?:[.!?]|$)",
+        r"\bestou estudando (?!para )(.+?)(?:[.!?]|$)",
+        r"\bestou estudando para (.+?)(?:[.!?]|$)",
+
+        # Objetivos
+        r"\bmeu objetivo é (.+?)(?:[.!?]|$)",
+        r"\bmeu objetivo e (.+?)(?:[.!?]|$)",
+        r"\bmeu objetivo é aprender (.+?)(?:[.!?]|$)",
+        r"\bmeu objetivo e aprender (.+?)(?:[.!?]|$)",
+
+        # Preferências
+        r"\beu gosto de (.+?)(?:[.!?]|$)",
+        r"\beu gosto muito de (.+?)(?:[.!?]|$)",
+        r"\beu prefiro (.+?)(?:[.!?]|$)",
+        r"\beu não gosto de (.+?)(?:[.!?]|$)",
+        r"\beu nao gosto de (.+?)(?:[.!?]|$)",
+    ]
+
+    memorias = []
+
+    # Nome
+    for padrao in padroes[:3]:
+        resultado = re.search(padrao, texto_original, flags=re.IGNORECASE)
+        if resultado:
+            nome = resultado.group(1).strip()
+            if 1 <= len(nome) <= 100:
+                memorias.append("O nome do usuário é " + nome)
+                break
+
+    # Idade
+    for padrao in padroes[3:5]:
+        resultado = re.search(padrao, texto_normalizado, flags=re.IGNORECASE)
+        if resultado:
+            idade = resultado.group(1).strip()
+            memorias.append("O usuário tem " + idade + " anos")
+            break
+
+    # Estudos
+    for padrao in padroes[5:11]:
+        resultado = re.search(padrao, texto_original, flags=re.IGNORECASE)
+        if resultado:
+            assunto = resultado.group(1).strip()
+            if 2 <= len(assunto) <= 180:
+                prefixo = "O usuário está estudando "
+                if "para" in padrao:
+                    prefixo = "O usuário está estudando para "
+                elif "estudo no" in padrao.lower() or "estudo na" in padrao.lower():
+                    prefixo = "O usuário estuda em "
+                memorias.append(prefixo + assunto)
+                break
+
+    # Objetivo
+    for padrao in padroes[11:15]:
+        resultado = re.search(padrao, texto_original, flags=re.IGNORECASE)
+        if resultado:
+            objetivo = resultado.group(1).strip()
+            if 2 <= len(objetivo) <= 180:
+                memorias.append("O objetivo do usuário é " + objetivo)
+                break
+
+    # Preferências
+    for padrao in padroes[15:20]:
+        resultado = re.search(padrao, texto_original, flags=re.IGNORECASE)
+        if resultado:
+            preferencia = resultado.group(1).strip()
+            if 2 <= len(preferencia) <= 180:
+                frase = padrao.lower()
+                if "não gosto" in frase or "nao gosto" in frase:
+                    memorias.append("O usuário não gosta de " + preferencia)
+                elif "prefiro" in frase:
+                    memorias.append("O usuário prefere " + preferencia)
+                else:
+                    memorias.append("O usuário gosta de " + preferencia)
+                break
+
+    # Evita duplicações caso mais de um padrão gere a mesma informação.
+    resultado_final = []
+    vistos = set()
+
+    for memoria in memorias:
+        chave = normalizar_texto(memoria)
+        if chave not in vistos:
+            vistos.add(chave)
+            resultado_final.append(memoria)
+
+    return resultado_final
+
+def formatar_memorias():
+
+    memorias = pegar_memoria()
+
+    if not memorias:
+        return "Ainda não tenho nenhuma memória salva sobre você."
+
+    resposta = (
+        "Estas são as informações que tenho salvas sobre você:\n\n"
+    )
+
+    for numero, memoria in enumerate(memorias, start=1):
+        resposta += f"{numero}. {memoria}\n"
+
+    return resposta.strip()
 
 
 # =========================================================
@@ -292,9 +852,6 @@ def cadastro():
 
     conexao.close()
 
-    session["usuario_id"] = usuario_id
-    session["usuario"] = usuario
-
     return jsonify({
         "sucesso": True,
         "mensagem": "Cadastro realizado com sucesso!"
@@ -378,6 +935,1601 @@ def logout():
 
 
 # =========================================================
+# PROJETOS
+# =========================================================
+
+@app.route(
+    "/projetos",
+    methods=["GET"]
+)
+@login_obrigatorio
+def listar_projetos():
+
+    conexao = conectar()
+
+    projetos = conexao.execute(
+        """
+        SELECT
+            id,
+            nome,
+            descricao,
+            icone,
+            criada_em,
+            atualizada_em
+        FROM projetos
+        WHERE usuario_id = ?
+        ORDER BY id DESC
+        """,
+        (session["usuario_id"],)
+    ).fetchall()
+
+    conexao.close()
+
+    return jsonify([
+        {
+            "id": projeto["id"],
+            "nome": projeto["nome"],
+            "descricao": projeto["descricao"],
+            "icone": projeto["icone"],
+            "criada_em": projeto["criada_em"],
+            "atualizada_em": projeto["atualizada_em"]
+        }
+        for projeto in projetos
+    ])
+
+# ==========================================================
+# CRIADOR DE SITES — GERAR SITE COMPLETO
+# ==========================================================
+
+@app.route("/sites", methods=["POST"])
+@login_obrigatorio
+def criar_site():
+
+    print(">>> ROTA /sites FOI ALCANÇADA <<<", flush=True)
+
+    dados = request.get_json() or {}
+
+    nome = str(dados.get("nome", "")).strip()
+    prompt = str(dados.get("prompt", "")).strip()
+
+    if not nome:
+        nome = "Novo Site"
+
+    if not prompt:
+        return jsonify({
+            "sucesso": False,
+            "erro": "Descreva o site que deseja criar."
+        }), 400
+
+    # ======================================================
+    # INSTRUÇÃO PARA A IA
+    # ======================================================
+
+    instrucao = f"""
+Crie o conteúdo de um site profissional para:
+
+{prompt}
+
+Organize sua resposta usando:
+
+# TÍTULO PRINCIPAL
+
+Texto de apresentação.
+
+## SOBRE
+
+Texto.
+
+## SERVIÇOS
+
+- Serviço 1
+- Serviço 2
+- Serviço 3
+
+## PRODUTOS
+
+- Produto 1
+- Produto 2
+- Produto 3
+
+## BENEFÍCIOS
+
+- Benefício 1
+- Benefício 2
+- Benefício 3
+
+## CONTATO
+
+Texto de contato.
+
+IMPORTANTE:
+
+- Não invente informações específicas.
+- Não invente telefones.
+- Não invente endereços.
+- Não invente preços.
+- Não invente e-mails.
+- Não invente redes sociais.
+- Use somente informações fornecidas pelo usuário.
+- Crie bastante conteúdo.
+- Não escreva explicações sobre o que está fazendo.
+- Não repita estas instruções.
+"""
+
+    try:
+
+        mensagens_site = [
+            {
+                "role": "system",
+                "content": (
+                    "Você cria conteúdo profissional para sites. "
+                    "Responda somente com o conteúdo do site."
+                )
+            },
+            {
+                "role": "user",
+                "content": instrucao
+            }
+        ]
+
+        print(
+            ">>> GERANDO SITE COM A IA <<<",
+            flush=True
+        )
+
+        resultado = ia(
+            mensagens_site,
+            max_new_tokens=1800,
+            do_sample=False
+        )
+
+        print(
+            ">>> IA TERMINOU A GERAÇÃO <<<",
+            flush=True
+        )
+
+        # ==================================================
+        # EXTRAIR RESPOSTA
+        # ==================================================
+
+        site_resposta = ""
+
+        gerado = resultado[0].get(
+            "generated_text",
+            ""
+        )
+
+        if isinstance(gerado, list):
+
+            for mensagem in reversed(gerado):
+
+                if (
+                    isinstance(mensagem, dict)
+                    and mensagem.get("role") == "assistant"
+                ):
+
+                    site_resposta = str(
+                        mensagem.get("content", "")
+                    ).strip()
+
+                    break
+
+        else:
+
+            site_resposta = str(
+                gerado
+            ).strip()
+
+        if not site_resposta:
+
+            return jsonify({
+                "sucesso": False,
+                "erro": "A IA não retornou conteúdo."
+            }), 500
+
+        # ==================================================
+        # SE A IA JÁ GEROU HTML, USAR DIRETAMENTE
+        # ==================================================
+
+        resposta_minuscula = site_resposta.lower()
+
+        if "<html" in resposta_minuscula:
+
+            site_html = site_resposta
+
+            # Remover possíveis blocos Markdown
+            if "```html" in site_html.lower():
+
+                inicio = site_html.lower().find(
+                    "```html"
+                )
+
+                site_html = site_html[
+                    inicio + len("```html"):
+                ].strip()
+
+                if "```" in site_html:
+
+                    site_html = site_html.split(
+                        "```",
+                        1
+                    )[0].strip()
+
+        else:
+
+            # ==================================================
+            # CONVERTER MARKDOWN PARA HTML
+            # ==================================================
+
+            linhas = site_resposta.splitlines()
+
+            titulo = "Novo Site"
+
+            corpo = []
+
+            menu = []
+
+            em_lista = False
+
+            for linha in linhas:
+
+                linha = linha.strip()
+
+                if not linha:
+                    continue
+
+                # ------------------------------------------
+                # TÍTULO
+                # ------------------------------------------
+
+                if linha.startswith("# "):
+
+                    texto = linha[2:].strip()
+
+                    if texto:
+                        titulo = texto
+
+                    continue
+
+                # ------------------------------------------
+                # SUBTÍTULO
+                # ------------------------------------------
+
+                if linha.startswith("## "):
+
+                    if em_lista:
+
+                        corpo.append("</ul>")
+                        em_lista = False
+
+                    texto = linha[3:].strip()
+
+                    if texto:
+
+                        slug = (
+                            texto
+                            .lower()
+                            .replace(" ", "-")
+                            .replace("á", "a")
+                            .replace("à", "a")
+                            .replace("ã", "a")
+                            .replace("â", "a")
+                            .replace("é", "e")
+                            .replace("ê", "e")
+                            .replace("í", "i")
+                            .replace("ó", "o")
+                            .replace("ô", "o")
+                            .replace("õ", "o")
+                            .replace("ú", "u")
+                            .replace("ç", "c")
+                        )
+
+                        menu.append(
+                            (texto, slug)
+                        )
+
+                        corpo.append(
+                            f'<section id="{slug}">'
+                        )
+
+                        corpo.append(
+                            f"<h2>{texto}</h2>"
+                        )
+
+                    continue
+
+                # ------------------------------------------
+                # SUBSEÇÃO
+                # ------------------------------------------
+
+                if linha.startswith("### "):
+
+                    texto = linha[4:].strip()
+
+                    if texto:
+
+                        corpo.append(
+                            f"<h3>{texto}</h3>"
+                        )
+
+                    continue
+
+                # ------------------------------------------
+                # LISTA
+                # ------------------------------------------
+
+                if linha.startswith("- "):
+
+                    if not em_lista:
+
+                        corpo.append("<ul>")
+                        em_lista = True
+
+                    item = linha[2:].strip()
+
+                    corpo.append(
+                        f"<li>{item}</li>"
+                    )
+
+                    continue
+
+                # ------------------------------------------
+                # FECHAR LISTA
+                # ------------------------------------------
+
+                if em_lista:
+
+                    corpo.append("</ul>")
+                    em_lista = False
+
+                # ------------------------------------------
+                # LINKS MARKDOWN
+                # ------------------------------------------
+
+                if (
+                    "[" in linha
+                    and "](" in linha
+                    and ")" in linha
+                ):
+
+                    inicio = linha.find("[")
+
+                    meio = linha.find("](", inicio)
+
+                    fim = linha.find(")", meio)
+
+                    if (
+                        inicio >= 0
+                        and meio > inicio
+                        and fim > meio
+                    ):
+
+                        texto_link = linha[
+                            inicio + 1:
+                            meio
+                        ]
+
+                        url_link = linha[
+                            meio + 2:
+                            fim
+                        ]
+
+                        linha = (
+                            linha[:inicio]
+                            + f'<a href="{url_link}" '
+                              'target="_blank">'
+                              f'{texto_link}'
+                              '</a>'
+                            + linha[fim + 1:]
+                        )
+
+                # ------------------------------------------
+                # PARÁGRAFO
+                # ------------------------------------------
+
+                corpo.append(
+                    f"<p>{linha}</p>"
+                )
+
+            if em_lista:
+
+                corpo.append("</ul>")
+
+            # Fechar última seção
+            corpo.append("</section>")
+
+            menu_html = ""
+
+            for texto_menu, slug_menu in menu:
+
+                menu_html += (
+                    f'<a href="#{slug_menu}">'
+                    f'{texto_menu}'
+                    '</a>'
+                )
+
+            corpo_html = "\n".join(corpo)
+
+            # ==================================================
+            # HTML COMPLETO
+            # ==================================================
+
+            site_html = f"""
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+>
+
+<title>{titulo}</title>
+
+<style>
+
+* {{
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}}
+
+html {{
+    scroll-behavior: smooth;
+}}
+
+body {{
+    font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
+
+    background:
+        linear-gradient(
+            135deg,
+            #111827,
+            #1f2937
+        );
+
+    color: #ffffff;
+
+    line-height: 1.7;
+}}
+
+header {{
+    position: sticky;
+    top: 0;
+
+    z-index: 1000;
+
+    background:
+        rgba(17, 24, 39, 0.95);
+
+    backdrop-filter: blur(10px);
+
+    border-bottom:
+        1px solid
+        rgba(255,255,255,0.1);
+
+    padding: 18px 30px;
+}}
+
+.header-container {{
+    max-width: 1200px;
+
+    margin: auto;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: space-between;
+
+    gap: 30px;
+}}
+
+.logo {{
+    font-size: 28px;
+
+    font-weight: 800;
+
+    color: #f59e0b;
+}}
+
+nav {{
+    display: flex;
+
+    flex-wrap: wrap;
+
+    gap: 20px;
+}}
+
+nav a {{
+    color: #ffffff;
+
+    text-decoration: none;
+
+    font-weight: 600;
+
+    transition: 0.3s;
+}}
+
+nav a:hover {{
+    color: #f59e0b;
+}}
+
+.hero {{
+    min-height: 78vh;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: center;
+
+    text-align: center;
+
+    padding: 80px 25px;
+
+    background:
+        radial-gradient(
+            circle at top,
+            rgba(245,158,11,0.25),
+            transparent 45%
+        );
+}}
+
+.hero-content {{
+    max-width: 900px;
+}}
+
+.hero h1 {{
+    font-size: clamp(
+        42px,
+        8vw,
+        82px
+    );
+
+    margin-bottom: 20px;
+
+    line-height: 1.05;
+}}
+
+.hero p {{
+    font-size: 20px;
+
+    color: #d1d5db;
+
+    margin-bottom: 30px;
+}}
+
+.hero-button {{
+    display: inline-block;
+
+    padding: 15px 28px;
+
+    background: #f59e0b;
+
+    color: #111827;
+
+    text-decoration: none;
+
+    border-radius: 12px;
+
+    font-weight: 800;
+
+    transition: 0.3s;
+}}
+
+.hero-button:hover {{
+    transform: translateY(-3px);
+
+    box-shadow:
+        0 10px 25px
+        rgba(245,158,11,0.3);
+}}
+
+main {{
+    background: #f9fafb;
+
+    color: #111827;
+}}
+
+section {{
+    max-width: 1200px;
+
+    margin: auto;
+
+    padding: 90px 25px;
+}}
+
+section:nth-child(even) {{
+    background: #f3f4f6;
+}}
+
+section h2 {{
+    font-size: 38px;
+
+    margin-bottom: 25px;
+
+    color: #111827;
+}}
+
+section h3 {{
+    font-size: 24px;
+
+    margin-top: 30px;
+
+    margin-bottom: 10px;
+}}
+
+section p {{
+    font-size: 18px;
+
+    margin-bottom: 18px;
+
+    color: #374151;
+}}
+
+section ul {{
+    list-style: none;
+
+    display: grid;
+
+    grid-template-columns:
+        repeat(
+            auto-fit,
+            minmax(220px, 1fr)
+        );
+
+    gap: 18px;
+
+    margin-top: 25px;
+}}
+
+section li {{
+    background: #ffffff;
+
+    padding: 25px;
+
+    border-radius: 16px;
+
+    box-shadow:
+        0 10px 30px
+        rgba(0,0,0,0.08);
+
+    font-weight: 600;
+
+    transition: 0.3s;
+}}
+
+section li:hover {{
+    transform: translateY(-4px);
+
+    box-shadow:
+        0 15px 35px
+        rgba(0,0,0,0.12);
+}}
+
+section a {{
+    color: #d97706;
+
+    font-weight: 700;
+}}
+
+footer {{
+    text-align: center;
+
+    padding: 35px 20px;
+
+    background: #111827;
+
+    color: #d1d5db;
+}}
+
+@media (max-width: 768px) {{
+
+    header {{
+        padding: 15px;
+    }}
+
+    .header-container {{
+        flex-direction: column;
+    }}
+
+    nav {{
+        justify-content: center;
+
+        gap: 12px;
+    }}
+
+    .hero {{
+        min-height: 70vh;
+
+        padding: 60px 20px;
+    }}
+
+    .hero p {{
+        font-size: 17px;
+    }}
+
+    section {{
+        padding: 60px 20px;
+    }}
+
+    section h2 {{
+        font-size: 30px;
+    }}
+
+}}
+
+</style>
+
+</head>
+
+<body>
+
+<header>
+
+    <div class="header-container">
+
+        <div class="logo">
+            {titulo}
+        </div>
+
+        <nav>
+            {menu_html}
+        </nav>
+
+    </div>
+
+</header>
+
+<div class="hero">
+
+    <div class="hero-content">
+
+        <h1>{titulo}</h1>
+
+        <p>
+            Uma experiência profissional,
+            moderna e pensada para você.
+        </p>
+
+        <a
+            href="#servicos"
+            class="hero-button"
+        >
+            Conheça nossos serviços
+        </a>
+
+    </div>
+
+</div>
+
+<main>
+
+    {corpo_html}
+
+</main>
+
+<footer>
+
+    <p>
+        © 2026 {titulo}
+    </p>
+
+</footer>
+
+</body>
+
+</html>
+"""
+
+        # ==================================================
+        # SALVAR NO BANCO
+        # ==================================================
+
+        agora = datetime.now().isoformat()
+
+        conn = sqlite3.connect("ia.db")
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            INSERT INTO sites (
+                usuario_id,
+                nome,
+                prompt,
+                html,
+                css,
+                js,
+                criada_em,
+                atualizada_em
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session["usuario_id"],
+                nome,
+                prompt,
+                site_html,
+                "",
+                "",
+                agora,
+                agora
+            )
+        )
+
+        site_id = cursor.lastrowid
+
+        conn.commit()
+
+        conn.close()
+
+        print(
+            f">>> SITE SALVO COM ID {site_id} <<<",
+            flush=True
+        )
+
+        # ==================================================
+        # RETORNAR AO FRONTEND
+        # ==================================================
+
+        return jsonify({
+            "sucesso": True,
+            "id": site_id,
+            "nome": nome,
+            "html": site_html,
+            "css": "",
+            "js": ""
+        })
+
+    except Exception as erro:
+
+        print(
+            ">>> ERRO AO GERAR SITE <<<",
+            flush=True
+        )
+
+        print(
+            repr(erro),
+            flush=True
+        )
+
+        return jsonify({
+            "sucesso": False,
+            "erro": (
+                "Erro interno ao gerar o site: "
+                + str(erro)
+            )
+        }), 500
+        # ==================================================
+        # GARANTIR DOCTYPE
+        # ==================================================
+
+        if not site_html.lower().startswith(
+            "<!doctype html"
+        ):
+
+            site_html = (
+                "<!DOCTYPE html>\n"
+                + site_html
+            )
+
+        # ==================================================
+        # SALVAR NO BANCO
+        # ==================================================
+
+        agora = datetime.now().isoformat()
+
+        conn = sqlite3.connect("ia.db")
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO sites (
+                usuario_id,
+                nome,
+                prompt,
+                html,
+                css,
+                js,
+                criada_em,
+                atualizada_em
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session["usuario_id"],
+                nome,
+                prompt,
+                site_html,
+                "",
+                "",
+                agora,
+                agora
+            )
+        )
+
+        site_id = cursor.lastrowid
+
+        conn.commit()
+        conn.close()
+
+        print(
+            f">>> SITE SALVO COM ID {site_id} <<<",
+            flush=True
+        )
+
+        # ==================================================
+        # RETORNAR PARA O FRONTEND
+        # ==================================================
+
+        return jsonify({
+            "sucesso": True,
+            "id": site_id,
+            "nome": nome,
+            "html": site_html,
+            "css": "",
+            "js": ""
+        })
+
+    except Exception as erro:
+
+        print(
+            ">>> ERRO AO GERAR SITE <<<",
+            flush=True
+        )
+
+        print(
+            repr(erro),
+            flush=True
+        )
+
+        return jsonify({
+            "sucesso": False,
+            "erro": (
+                "Erro interno ao gerar o site: "
+                + str(erro)
+            )
+        }), 500
+    # -----------------------------------------------------
+    # LIMPAR POSSÍVEL MARKDOWN
+    # -----------------------------------------------------
+
+    if "```html" in html.lower():
+
+        inicio = html.lower().find(
+            "```html"
+        )
+
+        html = html[
+            inicio + len("```html"):
+        ].strip()
+
+        if "```" in html:
+
+            html = html.split(
+                "```",
+                1
+            )[0].strip()
+
+    elif html.startswith("```"):
+
+        html = html[
+            3:
+        ].strip()
+
+        if html.endswith("```"):
+
+            html = html[
+                :-3
+            ].strip()
+
+    # -----------------------------------------------------
+    # REMOVER TEXTO ANTES DO DOCTYPE OU HTML
+    # -----------------------------------------------------
+
+    html_normalizado = html.lower()
+
+    posicao_doctype = html_normalizado.find(
+        "<!doctype"
+    )
+
+    if posicao_doctype > 0:
+
+        html = html[
+            posicao_doctype:
+        ].strip()
+
+    else:
+
+        posicao_html = html_normalizado.find(
+            "<html"
+        )
+
+        if posicao_html > 0:
+
+            html = html[
+                posicao_html:
+            ].strip()
+
+    # -----------------------------------------------------
+    # GARANTIR DOCTYPE
+    # -----------------------------------------------------
+
+    html_normalizado = html.lower()
+
+    if "<!doctype html" not in html_normalizado and "<html" in html_normalizado:
+
+        html = "<!DOCTYPE html>\n" + html
+        html_normalizado = html.lower()
+
+    # -----------------------------------------------------
+    # VERIFICAÇÃO BÁSICA
+    # -----------------------------------------------------
+
+    if (
+        "<!doctype html" not in html_normalizado
+        or "<html" not in html_normalizado
+        or "<body" not in html_normalizado
+    ):
+
+        print(
+            "HTML GERADO PELA IA:",
+            html,
+            flush=True
+        )
+
+        return jsonify({
+            "sucesso": False,
+            "erro": (
+                "A IA não conseguiu gerar "
+                "um HTML completo e válido."
+            )
+        }), 500
+
+    # -----------------------------------------------------
+    # SALVAR SITE
+    # -----------------------------------------------------
+
+    conexao = conectar()
+
+    agora = datetime.now().isoformat()
+
+    cursor = conexao.execute(
+        """
+        INSERT INTO sites (
+            usuario_id,
+            nome,
+            prompt,
+            html,
+            css,
+            js,
+            criada_em,
+            atualizada_em
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            session["usuario_id"],
+            nome,
+            prompt,
+            html,
+            "",
+            "",
+            agora,
+            agora
+        )
+    )
+
+    site_id = cursor.lastrowid
+
+    conexao.commit()
+    conexao.close()
+
+    # -----------------------------------------------------
+    # RETORNAR SITE
+    # -----------------------------------------------------
+
+    return jsonify({
+        "sucesso": True,
+        "id": site_id,
+        "nome": nome,
+        "html": html,
+        "css": "",
+        "js": ""
+    })
+
+# =========================================================
+# VISUALIZAR SITE CRIADO
+# =========================================================
+
+@app.route("/site/<int:site_id>")
+@login_obrigatorio
+def visualizar_site(site_id):
+
+    conexao = conectar()
+
+    site = conexao.execute(
+        """
+        SELECT *
+        FROM sites
+        WHERE id = ?
+        AND usuario_id = ?
+        """,
+        (
+            site_id,
+            session["usuario_id"]
+        )
+    ).fetchone()
+
+    conexao.close()
+
+    if not site:
+
+        return "Site não encontrado.", 404
+
+    return render_template(
+        "site_visualizacao.html",
+        site=site
+    )
+
+
+# =========================================================
+# CRIAR PROJETO
+# =========================================================
+
+@app.route(
+    "/projetos",
+    methods=["POST"]
+)
+@login_obrigatorio
+def criar_projeto():
+
+    dados = request.get_json() or {}
+
+    nome = str(
+        dados.get(
+            "nome",
+            ""
+        )
+    ).strip()
+
+    descricao = str(
+        dados.get(
+            "descricao",
+            ""
+        )
+    ).strip()
+
+    icone = str(
+        dados.get(
+            "icone",
+            "📁"
+        )
+    ).strip()
+
+    if not nome:
+
+        return jsonify({
+            "erro": "Digite um nome para o projeto."
+        }), 400
+
+    if len(nome) > 100:
+
+        return jsonify({
+            "erro": "O nome do projeto é muito grande."
+        }), 400
+
+    if len(descricao) > 500:
+
+        return jsonify({
+            "erro": "A descrição do projeto é muito grande."
+        }), 400
+
+    if not icone:
+
+        icone = "📁"
+
+    agora = datetime.now().isoformat()
+
+    conexao = conectar()
+
+    cursor = conexao.execute(
+        """
+        INSERT INTO projetos
+        (
+            usuario_id,
+            nome,
+            descricao,
+            icone,
+            criada_em,
+            atualizada_em
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            session["usuario_id"],
+            nome,
+            descricao,
+            icone,
+            agora,
+            agora
+        )
+    )
+
+    conexao.commit()
+
+    projeto_id = cursor.lastrowid
+
+    conexao.close()
+
+    return jsonify({
+        "sucesso": True,
+        "projeto": {
+            "id": projeto_id,
+            "nome": nome,
+            "descricao": descricao,
+            "icone": icone,
+            "criada_em": agora,
+            "atualizada_em": agora
+        }
+    })
+
+
+# =========================================================
+# ABRIR PROJETO
+# =========================================================
+
+@app.route(
+    "/projeto/<int:projeto_id>",
+    methods=["GET"]
+)
+@login_obrigatorio
+def abrir_projeto(projeto_id):
+
+    conexao = conectar()
+
+    projeto = conexao.execute(
+        """
+        SELECT
+            id,
+            nome,
+            descricao,
+            icone,
+            criada_em,
+            atualizada_em
+        FROM projetos
+        WHERE id = ?
+        AND usuario_id = ?
+        """,
+        (
+            projeto_id,
+            session["usuario_id"]
+        )
+    ).fetchone()
+
+    if not projeto:
+
+        conexao.close()
+
+        return jsonify({
+            "erro": "Projeto não encontrado."
+        }), 404
+
+    # -----------------------------------------------------
+    # DEFINIR PROJETO ATUAL NA SESSÃO
+    # -----------------------------------------------------
+
+    session["projeto_id"] = projeto_id
+
+    conversas = conexao.execute(
+        """
+        SELECT
+            id,
+            titulo,
+            criada_em,
+            projeto_id
+        FROM conversas
+        WHERE projeto_id = ?
+        AND usuario_id = ?
+        ORDER BY id DESC
+        """,
+        (
+            projeto_id,
+            session["usuario_id"]
+        )
+    ).fetchall()
+
+    conexao.close()
+
+    return jsonify({
+        "projeto": {
+            "id": projeto["id"],
+            "nome": projeto["nome"],
+            "descricao": projeto["descricao"],
+            "icone": projeto["icone"],
+            "criada_em": projeto["criada_em"],
+            "atualizada_em": projeto["atualizada_em"]
+        },
+
+        "conversas": [
+            {
+                "id": conversa["id"],
+                "titulo": conversa["titulo"],
+                "criada_em": conversa["criada_em"],
+                "projeto_id": conversa["projeto_id"]
+            }
+            for conversa in conversas
+        ]
+    })
+
+
+# =========================================================
+# LISTAR DOCUMENTOS DO PROJETO
+# =========================================================
+
+@app.route(
+    "/documentos",
+    methods=["GET"]
+)
+@login_obrigatorio
+def listar_documentos():
+
+    projeto_id = session.get(
+        "projeto_id"
+    )
+
+    conexao = conectar()
+
+    if projeto_id is not None:
+
+        documentos = conexao.execute(
+            """
+            SELECT
+                id,
+                nome,
+                enviado_em
+            FROM documentos
+            WHERE usuario_id = ?
+            AND projeto_id = ?
+            ORDER BY id DESC
+            """,
+            (
+                session["usuario_id"],
+                projeto_id
+            )
+        ).fetchall()
+
+    else:
+
+        documentos = conexao.execute(
+            """
+            SELECT
+                id,
+                nome,
+                enviado_em
+            FROM documentos
+            WHERE usuario_id = ?
+            AND projeto_id IS NULL
+            ORDER BY id DESC
+            """,
+            (
+                session["usuario_id"],
+            )
+        ).fetchall()
+
+    conexao.close()
+
+    return jsonify([
+        {
+            "id": documento["id"],
+            "nome": documento["nome"],
+            "enviado_em": documento["enviado_em"]
+        }
+        for documento in documentos
+    ])
+
+
+# =========================================================
+# EDITAR PROJETO
+# =========================================================
+
+@app.route(
+    "/projeto/<int:projeto_id>",
+    methods=["PUT"]
+)
+@login_obrigatorio
+def editar_projeto(projeto_id):
+
+    dados = request.get_json() or {}
+
+    nome = str(
+        dados.get(
+            "nome",
+            ""
+        )
+    ).strip()
+
+    descricao = str(
+        dados.get(
+            "descricao",
+            ""
+        )
+    ).strip()
+
+    icone = str(
+        dados.get(
+            "icone",
+            "📁"
+        )
+    ).strip()
+
+    if not nome:
+
+        return jsonify({
+            "erro": "O nome do projeto não pode ficar vazio."
+        }), 400
+
+    if len(nome) > 100:
+
+        return jsonify({
+            "erro": "O nome do projeto é muito grande."
+        }), 400
+
+    if len(descricao) > 500:
+
+        return jsonify({
+            "erro": "A descrição do projeto é muito grande."
+        }), 400
+
+    if not icone:
+
+        icone = "📁"
+
+    conexao = conectar()
+
+    projeto = conexao.execute(
+        """
+        SELECT id
+        FROM projetos
+        WHERE id = ?
+        AND usuario_id = ?
+        """,
+        (
+            projeto_id,
+            session["usuario_id"]
+        )
+    ).fetchone()
+
+    if not projeto:
+
+        conexao.close()
+
+        return jsonify({
+            "erro": "Projeto não encontrado."
+        }), 404
+
+    agora = datetime.now().isoformat()
+
+    conexao.execute(
+        """
+        UPDATE projetos
+        SET
+            nome = ?,
+            descricao = ?,
+            icone = ?,
+            atualizada_em = ?
+        WHERE id = ?
+        AND usuario_id = ?
+        """,
+        (
+            nome,
+            descricao,
+            icone,
+            agora,
+            projeto_id,
+            session["usuario_id"]
+        )
+    )
+
+    conexao.commit()
+
+    conexao.close()
+
+    return jsonify({
+        "sucesso": True,
+        "projeto": {
+            "id": projeto_id,
+            "nome": nome,
+            "descricao": descricao,
+            "icone": icone,
+            "atualizada_em": agora
+        }
+    })
+
+
+# =========================================================
+# EXCLUIR PROJETO
+# =========================================================
+
+@app.route(
+    "/projeto/<int:projeto_id>",
+    methods=["DELETE"]
+)
+@login_obrigatorio
+def excluir_projeto(projeto_id):
+
+    conexao = conectar()
+
+    projeto = conexao.execute(
+        """
+        SELECT id
+        FROM projetos
+        WHERE id = ?
+        AND usuario_id = ?
+        """,
+        (
+            projeto_id,
+            session["usuario_id"]
+        )
+    ).fetchone()
+
+    if not projeto:
+
+        conexao.close()
+
+        return jsonify({
+            "erro": "Projeto não encontrado."
+        }), 404
+
+    conexao.execute(
+        """
+        UPDATE conversas
+        SET projeto_id = NULL
+        WHERE projeto_id = ?
+        AND usuario_id = ?
+        """,
+        (
+            projeto_id,
+            session["usuario_id"]
+        )
+    )
+
+    conexao.execute(
+        """
+        DELETE FROM projetos
+        WHERE id = ?
+        AND usuario_id = ?
+        """,
+        (
+            projeto_id,
+            session["usuario_id"]
+        )
+    )
+
+    conexao.commit()
+
+    conexao.close()
+
+    if session.get("projeto_id") == projeto_id:
+
+        session.pop(
+            "projeto_id",
+            None
+        )
+
+    return jsonify({
+        "sucesso": True
+    })
+
+
+# =========================================================
 # LISTAR CONVERSAS
 # =========================================================
 
@@ -389,7 +2541,11 @@ def conversas():
 
     lista = conexao.execute(
         """
-        SELECT id, titulo, criada_em
+        SELECT
+            id,
+            titulo,
+            criada_em,
+            projeto_id
         FROM conversas
         WHERE usuario_id = ?
         ORDER BY id DESC
@@ -403,32 +2559,163 @@ def conversas():
         {
             "id": conversa["id"],
             "titulo": conversa["titulo"],
-            "criada_em": conversa["criada_em"]
+            "criada_em": conversa["criada_em"],
+            "projeto_id": conversa["projeto_id"]
         }
         for conversa in lista
     ])
 
 
 # =========================================================
+# EXCLUIR CONVERSA
+# =========================================================
+
+@app.route(
+    "/excluir_conversa/<int:conversa_id>",
+    methods=["DELETE"]
+)
+@login_obrigatorio
+def excluir_conversa(conversa_id):
+
+    usuario_id = session["usuario_id"]
+
+    conexao = conectar()
+
+    conversa = conexao.execute(
+        """
+        SELECT id
+        FROM conversas
+        WHERE id = ?
+        AND usuario_id = ?
+        """,
+        (
+            conversa_id,
+            usuario_id
+        )
+    ).fetchone()
+
+    if not conversa:
+
+        conexao.close()
+
+        return jsonify({
+            "erro": "Conversa não encontrada."
+        }), 404
+
+    conexao.execute(
+        """
+        DELETE FROM mensagens
+        WHERE conversa_id = ?
+        """,
+        (conversa_id,)
+    )
+
+    conexao.execute(
+        """
+        DELETE FROM conversas
+        WHERE id = ?
+        """,
+        (conversa_id,)
+    )
+
+    conexao.commit()
+    conexao.close()
+
+    if session.get("conversa_id") == conversa_id:
+
+        session.pop(
+            "conversa_id",
+            None
+        )
+
+    return jsonify({
+        "sucesso": True
+    })
+
+
+# =========================================================
 # NOVA CONVERSA
 # =========================================================
 
-@app.route("/nova_conversa", methods=["POST"])
+@app.route(
+    "/nova_conversa",
+    methods=["POST"]
+)
 @login_obrigatorio
 def nova_conversa():
+
+    dados = request.get_json() or {}
+
+    projeto_id = dados.get(
+        "projeto_id"
+    )
+
+    if projeto_id in (
+        None,
+        "",
+        0
+    ):
+
+        projeto_id = None
+
+    else:
+
+        try:
+
+            projeto_id = int(
+                projeto_id
+            )
+
+        except (
+            ValueError,
+            TypeError
+        ):
+
+            return jsonify({
+                "erro": "Projeto inválido."
+            }), 400
+
+        conexao = conectar()
+
+        projeto = conexao.execute(
+            """
+            SELECT id
+            FROM projetos
+            WHERE id = ?
+            AND usuario_id = ?
+            """,
+            (
+                projeto_id,
+                session["usuario_id"]
+            )
+        ).fetchone()
+
+        conexao.close()
+
+        if not projeto:
+
+            return jsonify({
+                "erro": "Projeto não encontrado."
+            }), 404
 
     conexao = conectar()
 
     cursor = conexao.execute(
         """
         INSERT INTO conversas
-        (usuario_id, titulo, criada_em)
-        VALUES (?, ?, ?)
+        (
+            usuario_id,
+            titulo,
+            criada_em,
+            projeto_id
+        )
+        VALUES (?, ?, ?, ?)
         """,
         (
             session["usuario_id"],
             "Nova conversa",
-            datetime.now().isoformat()
+            datetime.now().isoformat(),
+            projeto_id
         )
     )
 
@@ -440,9 +2727,21 @@ def nova_conversa():
 
     session["conversa_id"] = conversa_id
 
+    if projeto_id is not None:
+
+        session["projeto_id"] = projeto_id
+
+    else:
+
+        session.pop(
+            "projeto_id",
+            None
+        )
+
     return jsonify({
         "sucesso": True,
-        "conversa_id": conversa_id
+        "conversa_id": conversa_id,
+        "projeto_id": projeto_id
     })
 
 
@@ -450,7 +2749,9 @@ def nova_conversa():
 # ABRIR CONVERSA
 # =========================================================
 
-@app.route("/conversa/<int:conversa_id>")
+@app.route(
+    "/conversa/<int:conversa_id>"
+)
 @login_obrigatorio
 def abrir_conversa(conversa_id):
 
@@ -491,11 +2792,23 @@ def abrir_conversa(conversa_id):
 
     session["conversa_id"] = conversa_id
 
+    if conversa["projeto_id"] is not None:
+
+        session["projeto_id"] = conversa["projeto_id"]
+
+    else:
+
+        session.pop(
+            "projeto_id",
+            None
+        )
+
     return jsonify({
         "conversa": {
             "id": conversa["id"],
             "titulo": conversa["titulo"],
-            "criada_em": conversa["criada_em"]
+            "criada_em": conversa["criada_em"],
+            "projeto_id": conversa["projeto_id"]
         },
 
         "mensagens": [
@@ -617,7 +2930,15 @@ def palavras_importantes(texto):
         "documento",
         "principal",
         "assunto",
-        "tema"
+        "tema",
+        "diz",
+        "fala",
+        "falar",
+        "conta",
+        "trata",
+        "conteudo",
+        "informacao",
+        "informacoes"
     }
 
     resultado = []
@@ -640,7 +2961,7 @@ def palavras_importantes(texto):
 
 
 # =========================================================
-# IDENTIFICAR NOME DO PDF NA PERGUNTA
+# IDENTIFICAR NOME DO PDF
 # =========================================================
 
 def encontrar_documento_mencionado(
@@ -683,7 +3004,10 @@ def encontrar_documento_mencionado(
 
         for parte in partes:
 
-            if len(parte) >= 4 and parte in pergunta_normalizada:
+            if (
+                len(parte) >= 4
+                and parte in pergunta_normalizada
+            ):
 
                 pontos += 5
 
@@ -697,7 +3021,7 @@ def encontrar_documento_mencionado(
 
 
 # =========================================================
-# IDENTIFICAR TIPO DE PERGUNTA SOBRE PDF
+# IDENTIFICAR TIPO DE PERGUNTA
 # =========================================================
 
 def identificar_tipo_pergunta(pergunta):
@@ -718,6 +3042,7 @@ def identificar_tipo_pergunta(pergunta):
         "titulo" in texto
         or "nome do pdf" in texto
     ):
+
         tipos["titulo"] = True
 
     if (
@@ -727,6 +3052,7 @@ def identificar_tipo_pergunta(pergunta):
         or "sobre o que" in texto
         or "fala sobre" in texto
     ):
+
         tipos["assunto"] = True
 
     if (
@@ -734,19 +3060,30 @@ def identificar_tipo_pergunta(pergunta):
         or "finalidade" in texto
         or "objetivos" in texto
     ):
+
         tipos["objetivo"] = True
 
     if (
         "resuma" in texto
         or "resumo" in texto
         or "resumir" in texto
+        or "o que diz" in texto
+        or "o que fala" in texto
+        or "do que fala" in texto
+        or "do que se trata" in texto
+        or "conteudo do pdf" in texto
+        or "conteudo do documento" in texto
+        or "o que tem no pdf" in texto
+        or "o que tem no documento" in texto
     ):
+
         tipos["resumo"] = True
 
     if (
         "primeiro paragrafo" in texto
         or "primeiro parágrafo" in pergunta.lower()
     ):
+
         tipos["primeiro_paragrafo"] = True
 
     return tipos
@@ -763,9 +3100,6 @@ def criar_trechos(texto):
     if not texto:
         return trechos
 
-    # Primeiro trecho:
-    # extremamente importante para título,
-    # introdução e objetivo.
     inicio_importante = texto[:3000]
 
     trechos.append({
@@ -774,7 +3108,6 @@ def criar_trechos(texto):
         "pontos": 0
     })
 
-    # Trechos menores para busca específica
     tamanho = 1200
     sobreposicao = 200
 
@@ -814,156 +3147,95 @@ def buscar_trechos_pdf(
     documentos
 ):
 
+    print("CACHE TESTE: ENTROU EM buscar_trechos_pdf", flush=True)
+
+    if not documentos:
+        print("BUSCA PDF: nenhum documento disponível", flush=True)
+        return []
+
+    chave_cache = _cache_chave(
+        pergunta,
+        documentos
+    )
+
+    resultado_cache = buscar_cache_consulta(
+        chave_cache
+    )
+
+    if resultado_cache is not None:
+        print("CACHE DE CONSULTA: HIT", flush=True)
+        return resultado_cache
+
+    print("CACHE DE CONSULTA: MISS", flush=True)
+
     tipo = identificar_tipo_pergunta(
         pergunta
     )
 
-    documento_mencionado = (
-        encontrar_documento_mencionado(
-            pergunta,
-            documentos
-        )
+    documento_mencionado = encontrar_documento_mencionado(
+        pergunta,
+        documentos
     )
-
-    documentos_para_busca = []
 
     if documento_mencionado:
-
-        documentos_para_busca.append(
-            documento_mencionado
-        )
-
+        documentos_para_busca = [documento_mencionado]
     else:
-
         documentos_para_busca = documentos
 
-
-    palavras = palavras_importantes(
-        pergunta
-    )
-
+    palavras = palavras_importantes(pergunta)
     trechos = []
 
     for documento in documentos_para_busca:
 
         nome = documento["nome"]
-
         texto = documento["texto"] or ""
 
         if not texto.strip():
             continue
 
-        partes = criar_trechos(
-            texto
-        )
+        partes = criar_trechos(texto)
 
-        for parte in partes:
+        for indice, parte in enumerate(partes):
 
             trecho = parte["texto"]
-
-            trecho_normalizado = normalizar_texto(
-                trecho
-            )
+            trecho_normalizado = normalizar_texto(trecho)
 
             pontos = 0
-
             palavras_encontradas = 0
 
-
-            # -----------------------------------------
-            # BUSCA POR PALAVRAS
-            # -----------------------------------------
-
+            # Correspondência das palavras da pergunta.
             for palavra in palavras:
-
-                quantidade = (
-                    trecho_normalizado.count(
-                        palavra
-                    )
-                )
-
+                quantidade = trecho_normalizado.count(palavra)
                 if quantidade > 0:
-
                     palavras_encontradas += 1
+                    pontos += min(quantidade * 3, 12)
 
-                    pontos += min(
-                        quantidade * 2,
-                        8
-                    )
+            # Perguntas sobre o documento inteiro devem priorizar o início.
+            if tipo["resumo"] or tipo["assunto"] or tipo["objetivo"]:
+                if parte["tipo"] == "inicio":
+                    pontos += 50
+                elif indice == 1:
+                    pontos += 15
 
+            if tipo["titulo"] and parte["tipo"] == "inicio":
+                pontos += 60
 
-            # -----------------------------------------
-            # BÔNUS PARA O INÍCIO DO PDF
-            # -----------------------------------------
-
-            if parte["tipo"] == "inicio":
-
-                if (
-                    tipo["assunto"]
-                    or tipo["titulo"]
-                    or tipo["objetivo"]
-                    or tipo["resumo"]
-                    or tipo["primeiro_paragrafo"]
-                ):
-
-                    pontos += 30
-
-
-            # -----------------------------------------
-            # BÔNUS PARA DOCUMENTO MENCIONADO
-            # -----------------------------------------
+            if tipo["primeiro_paragrafo"] and parte["tipo"] == "inicio":
+                pontos += 60
 
             if documento_mencionado:
-
                 pontos += 50
 
+            # Se houver palavras relevantes, dê um pequeno bônus ao início.
+            if palavras and parte["tipo"] == "inicio":
+                pontos += 10
 
-            # -----------------------------------------
-            # BÔNUS PARA PALAVRAS DE TÍTULO
-            # -----------------------------------------
-
-            primeiras_linhas = "\n".join(
-                trecho.splitlines()[:12]
-            )
-
-            primeiras_linhas_normalizadas = (
-                normalizar_texto(
-                    primeiras_linhas
-                )
-            )
-
-            if tipo["titulo"]:
-
-                pontos += 20
-
-            if tipo["assunto"]:
-
-                palavras_assunto = [
-                    "analise",
-                    "analise e desenvolvimento",
-                    "modelo",
-                    "machine learning",
-                    "previsao",
-                    "precos",
-                    "economicos",
-                    "economica",
-                    "pesquisa",
-                    "estudo"
-                ]
-
-                for palavra in palavras_assunto:
-
-                    if palavra in primeiras_linhas_normalizadas:
-
-                        pontos += 8
-
-
-            # -----------------------------------------
-            # ADICIONAR TRECHO
-            # -----------------------------------------
+            # Nunca descarte o início de um PDF quando a pergunta é claramente
+            # sobre o conteúdo do próprio PDF.
+            if not palavras and parte["tipo"] == "inicio":
+                pontos += 40
 
             if pontos > 0:
-
                 trechos.append({
                     "nome": nome,
                     "texto": trecho,
@@ -972,10 +3244,32 @@ def buscar_trechos_pdf(
                     "tipo": parte["tipo"]
                 })
 
+    # Fallback importante: perguntas genéricas como
+    # "o que diz o pdf?" devem sempre receber contexto do PDF.
+    if not trechos:
 
-    # =====================================================
-    # ORDENAR
-    # =====================================================
+        print(
+            "BUSCA PDF: nenhum trecho pontuado; usando início dos documentos.",
+            flush=True
+        )
+
+        for documento in documentos_para_busca:
+
+            texto = documento["texto"] or ""
+
+            if not texto.strip():
+                continue
+
+            partes = criar_trechos(texto)
+
+            for parte in partes[:2]:
+                trechos.append({
+                    "nome": documento["nome"],
+                    "texto": parte["texto"],
+                    "pontos": 1,
+                    "palavras": 0,
+                    "tipo": parte["tipo"]
+                })
 
     trechos.sort(
         key=lambda item: (
@@ -985,33 +3279,32 @@ def buscar_trechos_pdf(
         reverse=True
     )
 
-
-    # =====================================================
-    # EVITAR TRECHOS REPETIDOS
-    # =====================================================
-
     selecionados = []
-
     textos_usados = set()
 
     for trecho in trechos:
 
-        chave = trecho["texto"][:150]
+        chave = trecho["texto"][:200]
 
         if chave in textos_usados:
             continue
 
-        textos_usados.add(
-            chave
-        )
-
-        selecionados.append(
-            trecho
-        )
+        textos_usados.add(chave)
+        selecionados.append(trecho)
 
         if len(selecionados) >= 3:
             break
 
+    salvar_cache_consulta(
+        chave_cache,
+        selecionados
+    )
+
+    print(
+        "CACHE DE CONSULTA: SALVO | trechos:",
+        len(selecionados),
+        flush=True
+    )
 
     return selecionados
 
@@ -1029,7 +3322,6 @@ NENHUM TRECHO RELEVANTE FOI ENCONTRADO.
 
 Não invente informações.
 """
-
 
     contexto = (
         "\n===== INFORMAÇÕES EXTRAÍDAS DO PDF =====\n"
@@ -1081,12 +3373,80 @@ def perguntar():
             "erro": "Digite uma pergunta."
         }), 400
 
+    # -----------------------------------------------------
+    # MEMÓRIA AUTOMÁTICA
+    # -----------------------------------------------------
 
-    # =====================================================
-    # IDENTIFICAR TIPO DA PERGUNTA
-    # =====================================================
+    memorias_automaticas = extrair_memorias_automaticas(
+        pergunta
+    )
+
+    for informacao in memorias_automaticas:
+        adicionou = adicionar_memoria(informacao)
+
+        if adicionou:
+            print(
+                "MEMÓRIA AUTOMÁTICA SALVA:",
+                informacao
+            )
+
+    # -----------------------------------------------------
+    # COMANDOS DE MEMÓRIA
+    # -----------------------------------------------------
+
+    comando_memoria = identificar_comando_memoria(pergunta)
+    tipo_comando_memoria = comando_memoria["tipo"]
+
+    if tipo_comando_memoria == "salvar":
+
+        informacao = comando_memoria["informacao"]
+        salvou = adicionar_memoria(informacao)
+
+        if salvou:
+            return jsonify({
+                "resposta": (
+                    "Certo! Vou me lembrar disso: "
+                    + informacao
+                )
+            })
+
+        return jsonify({
+            "resposta": "Eu já tinha essa informação na memória."
+        })
+
+    if tipo_comando_memoria == "listar":
+
+        return jsonify({
+            "resposta": formatar_memorias()
+        })
+
+    if tipo_comando_memoria == "apagar":
+
+        informacao = comando_memoria["informacao"]
+        apagadas = apagar_memoria_por_texto(informacao)
+
+        if not apagadas:
+            return jsonify({
+                "resposta": (
+                    "Não encontrei uma memória correspondente "
+                    "para esquecer."
+                )
+            })
+
+        resposta_memoria = "Certo! Esqueci estas informações:\n\n"
+
+        for memoria in apagadas:
+            resposta_memoria += "- " + memoria + "\n"
+
+        return jsonify({
+            "resposta": resposta_memoria.strip()
+        })
 
     tipo = identificar_tipo_pergunta(
+        pergunta
+    )
+
+    pergunta_normalizada = normalizar_texto(
         pergunta
     )
 
@@ -1096,14 +3456,9 @@ def perguntar():
         or tipo["objetivo"]
         or tipo["resumo"]
         or tipo["primeiro_paragrafo"]
-        or "pdf" in normalizar_texto(pergunta)
-        or "documento" in normalizar_texto(pergunta)
+        or "pdf" in pergunta_normalizada
+        or "documento" in pergunta_normalizada
     )
-
-
-    # =====================================================
-    # CONVERSA
-    # =====================================================
 
     conversa_id = session.get(
         "conversa_id"
@@ -1111,18 +3466,28 @@ def perguntar():
 
     if not conversa_id:
 
+        projeto_id = session.get(
+            "projeto_id"
+        )
+
         conexao = conectar()
 
         cursor = conexao.execute(
             """
             INSERT INTO conversas
-            (usuario_id, titulo, criada_em)
-            VALUES (?, ?, ?)
+            (
+                usuario_id,
+                titulo,
+                criada_em,
+                projeto_id
+            )
+            VALUES (?, ?, ?, ?)
             """,
             (
                 session["usuario_id"],
                 pergunta[:40],
-                datetime.now().isoformat()
+                datetime.now().isoformat(),
+                projeto_id
             )
         )
 
@@ -1135,31 +3500,52 @@ def perguntar():
         session["conversa_id"] = conversa_id
 
 
-    # =====================================================
-    # PEGAR DOCUMENTOS
-    # =====================================================
-
     conexao = conectar()
 
-    documentos = conexao.execute(
-        """
-        SELECT nome, texto
-        FROM documentos
-        WHERE usuario_id = ?
-        """,
-        (session["usuario_id"],)
-    ).fetchall()
+
+    # -----------------------------------------------------
+    # DOCUMENTOS DO PROJETO ATUAL
+    # -----------------------------------------------------
+
+    projeto_id_atual = session.get(
+        "projeto_id"
+    )
+
+    if projeto_id_atual is not None:
+
+        documentos = conexao.execute(
+            """
+            SELECT id, nome, texto
+            FROM documentos
+            WHERE usuario_id = ?
+            AND projeto_id = ?
+            """,
+            (
+                session["usuario_id"],
+                projeto_id_atual
+            )
+        ).fetchall()
+
+    else:
+
+        documentos = conexao.execute(
+            """
+            SELECT id, nome, texto
+            FROM documentos
+            WHERE usuario_id = ?
+            AND projeto_id IS NULL
+            """,
+            (
+                session["usuario_id"],
+            )
+        ).fetchall()
 
 
-    # =====================================================
+    # -----------------------------------------------------
     # HISTÓRICO
-    # =====================================================
+    # -----------------------------------------------------
 
     historico = []
-
-    # Para perguntas sobre PDF, NÃO usamos o histórico.
-    # Isso impede uma resposta errada anterior
-    # de contaminar a resposta atual.
 
     if not pergunta_sobre_pdf:
 
@@ -1169,7 +3555,7 @@ def perguntar():
             FROM mensagens
             WHERE conversa_id = ?
             ORDER BY id DESC
-            LIMIT 4
+            LIMIT 2
             """,
             (conversa_id,)
         ).fetchall()
@@ -1178,51 +3564,57 @@ def perguntar():
             reversed(historico)
         )
 
-
     conexao.close()
 
 
-    # =====================================================
-    # BUSCAR PDF
-    # =====================================================
+    # -----------------------------------------------------
+    # BUSCA PDF
+    # -----------------------------------------------------
 
     trechos = buscar_trechos_pdf(
         pergunta,
         documentos
     )
 
-
-    # =====================================================
-    # CONTEXTO PDF
-    # =====================================================
-
     contexto_pdf = montar_contexto_pdf(
         trechos
     )
 
+    # -----------------------------------------------------
+    # MEMÓRIA RELEVANTE
+    # -----------------------------------------------------
 
-    # =====================================================
-    # MEMÓRIA
-    # =====================================================
+    memorias_relevantes = []
 
-    memoria_usuario = pegar_memoria()
+    if not pergunta_sobre_pdf:
+        memorias_relevantes = encontrar_memoria_por_texto(
+            pergunta
+        )
 
     contexto_memoria = ""
 
-    if memoria_usuario and not pergunta_sobre_pdf:
+    if memorias_relevantes:
 
         contexto_memoria = (
-            "\n\nMEMÓRIA DO USUÁRIO:\n"
-            + "\n".join(
-                "- " + item
-                for item in memoria_usuario
+            "\n\n===== MEMÓRIAS RELEVANTES DO USUÁRIO =====\n"
+        )
+
+        for memoria in memorias_relevantes[:5]:
+
+            contexto_memoria += (
+                "- "
+                + memoria["informacao"]
+                + "\n"
             )
+
+        contexto_memoria += (
+            "===== FIM DAS MEMÓRIAS =====\n"
         )
 
 
-    # =====================================================
-    # INSTRUÇÕES ESPECÍFICAS
-    # =====================================================
+    # -----------------------------------------------------
+    # INSTRUÇÕES DA IA
+    # -----------------------------------------------------
 
     if tipo["titulo"]:
 
@@ -1236,7 +3628,6 @@ Procure o título nas primeiras linhas.
 Responda somente com o título encontrado,
 sem inventar outro.
 """
-
 
     elif tipo["assunto"]:
 
@@ -1258,7 +3649,6 @@ Se o título deixar o assunto evidente,
 use-o como base da resposta.
 """
 
-
     elif tipo["objetivo"]:
 
         instrucao = """
@@ -1274,7 +3664,6 @@ no documento.
 Não invente.
 """
 
-
     elif tipo["primeiro_paragrafo"]:
 
         instrucao = """
@@ -1287,7 +3676,6 @@ presente no primeiro parágrafo.
 
 Não invente.
 """
-
 
     elif tipo["resumo"]:
 
@@ -1302,43 +3690,52 @@ Não invente informações que não aparecem
 no documento.
 """
 
-
     elif pergunta_sobre_pdf:
 
         instrucao = """
 A pergunta é sobre um PDF.
 
-Use somente as informações extraídas
+Use obrigatoriamente as informações extraídas
 do PDF fornecidas abaixo.
 
-Não use conhecimento externo para completar
-lacunas.
+Se a pergunta for genérica, como "o que diz o pdf?",
+"o que tem no pdf?" ou "sobre o que é o pdf?",
+faça um resumo curto do conteúdo usando principalmente
+o início do documento e os demais trechos fornecidos.
 
-Se a informação não estiver disponível,
-diga:
+Não responda que a informação não foi encontrada
+se houver qualquer trecho do PDF fornecido.
 
-"Não encontrei essa informação nos PDFs disponíveis."
+Só diga "Não encontrei essa informação nos PDFs disponíveis."
+quando o contexto realmente estiver vazio.
 
-Não invente nomes, números, datas ou fatos.
+Não use conhecimento externo e não invente nomes,
+números, datas ou fatos.
 """
-
 
     else:
 
         instrucao = """
-Responda normalmente em português do Brasil.
+Responda em português do Brasil.
 
-Use o histórico da conversa quando necessário.
+Seja rápido, claro e completo.
 
-Seja objetivo e claro.
+Explique a resposta de forma simples, mas suficiente
+para o usuário entender o assunto.
 
+Quando a pergunta pedir uma definição:
+- dê a definição;
+- explique brevemente;
+- dê um exemplo quando isso ajudar.
+
+Não faça introduções desnecessárias.
+Não repita a pergunta.
 Não invente informações.
+
+Use o histórico somente quando ele for necessário
+para entender a pergunta atual.
 """
 
-
-    # =====================================================
-    # SISTEMA
-    # =====================================================
 
     sistema = f"""
 Você é uma inteligência artificial brasileira,
@@ -1360,10 +3757,6 @@ são a fonte principal para perguntas sobre PDFs.
 """
 
 
-    # =====================================================
-    # MENSAGENS PARA A IA
-    # =====================================================
-
     mensagens = [
         {
             "role": "system",
@@ -1375,10 +3768,6 @@ são a fonte principal para perguntas sobre PDFs.
     ]
 
 
-    # =====================================================
-    # HISTÓRICO
-    # =====================================================
-
     for mensagem in historico:
 
         mensagens.append({
@@ -1387,19 +3776,15 @@ são a fonte principal para perguntas sobre PDFs.
         })
 
 
-    # =====================================================
-    # PERGUNTA
-    # =====================================================
-
     mensagens.append({
         "role": "user",
         "content": pergunta
     })
 
 
-    # =====================================================
-    # DEBUG
-    # =====================================================
+    # -----------------------------------------------------
+    # LOG
+    # -----------------------------------------------------
 
     print(
         "\n=============================="
@@ -1414,6 +3799,14 @@ são a fonte principal para perguntas sobre PDFs.
     )
 
     print(
+        "\nPROJETO ATUAL:"
+    )
+
+    print(
+        projeto_id_atual
+    )
+
+    print(
         "\nTIPOS:"
     )
 
@@ -1421,15 +3814,17 @@ são a fonte principal para perguntas sobre PDFs.
         tipo
     )
 
-    print(
-        "\nPDF MENCIONADO:"
-    )
 
     documento_mencionado = (
         encontrar_documento_mencionado(
             pergunta,
             documentos
         )
+    )
+
+
+    print(
+        "\nPDF MENCIONADO:"
     )
 
     if documento_mencionado:
@@ -1443,6 +3838,7 @@ são a fonte principal para perguntas sobre PDFs.
         print(
             "Nenhum documento específico"
         )
+
 
     print(
         "\nTRECHOS ENCONTRADOS:"
@@ -1470,20 +3866,26 @@ são a fonte principal para perguntas sobre PDFs.
             trecho["texto"][:700]
         )
 
+
     print(
         "==============================\n"
     )
 
 
-    # =====================================================
+    # -----------------------------------------------------
     # GERAR RESPOSTA
-    # =====================================================
+    # -----------------------------------------------------
 
     try:
 
+        if pergunta_sobre_pdf:
+            limite_tokens = 140
+        else:
+            limite_tokens = 80
+
         resultado = ia(
             mensagens,
-            max_new_tokens=140,
+            max_new_tokens=limite_tokens,
             do_sample=False
         )
 
@@ -1506,9 +3908,9 @@ são a fonte principal para perguntas sobre PDFs.
         }), 500
 
 
-    # =====================================================
+    # -----------------------------------------------------
     # SALVAR MENSAGENS
-    # =====================================================
+    # -----------------------------------------------------
 
     conexao = conectar()
 
@@ -1544,11 +3946,6 @@ são a fonte principal para perguntas sobre PDFs.
 
     conexao.close()
 
-
-    # =====================================================
-    # RETORNO
-    # =====================================================
-
     return jsonify({
         "resposta": resposta
     })
@@ -1575,7 +3972,6 @@ def upload():
             "erro": "Nenhum arquivo enviado."
         }), 400
 
-
     nome = secure_filename(
         arquivo.filename
     )
@@ -1587,7 +3983,6 @@ def upload():
         return jsonify({
             "erro": "Por enquanto, envie apenas arquivos PDF."
         }), 400
-
 
     nome_unico = (
         str(uuid.uuid4())
@@ -1603,11 +3998,6 @@ def upload():
     arquivo.save(
         caminho
     )
-
-
-    # =====================================================
-    # LER PDF
-    # =====================================================
 
     try:
 
@@ -1626,8 +4016,13 @@ def upload():
 
             texto += "\n"
 
-
     except Exception as erro:
+
+        try:
+            if os.path.exists(caminho):
+                os.remove(caminho)
+        except OSError:
+            pass
 
         return jsonify({
             "erro": (
@@ -1636,12 +4031,13 @@ def upload():
             )
         }), 500
 
-
-    # =====================================================
-    # VERIFICAR SE O PDF TEM TEXTO
-    # =====================================================
-
     if not texto.strip():
+
+        try:
+            if os.path.exists(caminho):
+                os.remove(caminho)
+        except OSError:
+            pass
 
         return jsonify({
             "erro": (
@@ -1652,24 +4048,61 @@ def upload():
         }), 400
 
 
-    # =====================================================
-    # SALVAR DOCUMENTO
-    # =====================================================
+    # -----------------------------------------------------
+    # PROJETO ATUAL
+    # -----------------------------------------------------
+
+    projeto_id = session.get(
+        "projeto_id"
+    )
 
     conexao = conectar()
+
+
+    if projeto_id is not None:
+
+        projeto = conexao.execute(
+            """
+            SELECT id
+            FROM projetos
+            WHERE id = ?
+            AND usuario_id = ?
+            """,
+            (
+                projeto_id,
+                session["usuario_id"]
+            )
+        ).fetchone()
+
+        if not projeto:
+
+            projeto_id = None
+
+
+    # -----------------------------------------------------
+    # SALVAR DOCUMENTO
+    # -----------------------------------------------------
 
     conexao.execute(
         """
         INSERT INTO documentos
-        (usuario_id, nome, caminho, texto, enviado_em)
-        VALUES (?, ?, ?, ?, ?)
+        (
+            usuario_id,
+            nome,
+            caminho,
+            texto,
+            enviado_em,
+            projeto_id
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
         (
             session["usuario_id"],
             nome,
             caminho,
             texto,
-            datetime.now().isoformat()
+            datetime.now().isoformat(),
+            projeto_id
         )
     )
 
@@ -1687,9 +4120,16 @@ def upload():
     )
 
     print(
+        "Projeto:",
+        projeto_id
+    )
+
+    print(
         "Caracteres extraídos:",
         len(texto)
     )
+
+    limpar_cache_consultas()
 
 
     return jsonify({
@@ -1697,6 +4137,58 @@ def upload():
         "mensagem": (
             f"PDF '{nome}' enviado e lido com sucesso."
         )
+    })
+
+
+# =========================================================
+# EXCLUIR DOCUMENTO
+# =========================================================
+
+@app.route(
+    "/excluir_documento/<int:id>",
+    methods=["DELETE"]
+)
+@login_obrigatorio
+def excluir_documento(id):
+
+    conexao = conectar()
+
+    documento = conexao.execute(
+        """
+        SELECT id, nome, caminho, projeto_id
+        FROM documentos
+        WHERE id = ?
+        AND usuario_id = ?
+        """,
+        (id, session["usuario_id"])
+    ).fetchone()
+
+    if not documento:
+        conexao.close()
+        return jsonify({"erro": "Arquivo não encontrado."}), 404
+
+    conexao.execute(
+        """
+        DELETE FROM documentos
+        WHERE id = ? AND usuario_id = ?
+        """,
+        (id, session["usuario_id"])
+    )
+    conexao.commit()
+    conexao.close()
+
+    caminho = documento["caminho"]
+    if caminho and os.path.exists(caminho):
+        try:
+            os.remove(caminho)
+        except OSError as erro:
+            print("Aviso ao remover arquivo físico:", erro, flush=True)
+
+    limpar_cache_consultas()
+
+    return jsonify({
+        "sucesso": True,
+        "mensagem": "Arquivo excluído com sucesso!"
     })
 
 
@@ -1727,17 +4219,42 @@ def pesquisar_documentos():
 
     conexao = conectar()
 
-    documentos = conexao.execute(
-        """
-        SELECT id, nome, texto
-        FROM documentos
-        WHERE usuario_id = ?
-        """,
-        (session["usuario_id"],)
-    ).fetchall()
+    projeto_id_atual = session.get(
+        "projeto_id"
+    )
+
+
+    if projeto_id_atual is not None:
+
+        documentos = conexao.execute(
+            """
+            SELECT id, nome, texto
+            FROM documentos
+            WHERE usuario_id = ?
+            AND projeto_id = ?
+            """,
+            (
+                session["usuario_id"],
+                projeto_id_atual
+            )
+        ).fetchall()
+
+    else:
+
+        documentos = conexao.execute(
+            """
+            SELECT id, nome, texto
+            FROM documentos
+            WHERE usuario_id = ?
+            AND projeto_id IS NULL
+            """,
+            (
+                session["usuario_id"],
+            )
+        ).fetchall()
+
 
     conexao.close()
-
 
     resultados = []
 
@@ -1760,19 +4277,216 @@ def pesquisar_documentos():
                 "nome": documento["nome"]
             })
 
-
     return jsonify({
         "resultados": resultados
     })
 
 
 # =========================================================
+# CRIADOR DE SITES
+# =========================================================
+
+@app.route(
+    "/gerar_site",
+    methods=["POST"]
+)
+@login_obrigatorio
+def gerar_site():
+
+    dados = request.get_json() or {}
+
+    descricao = str(
+        dados.get(
+            "descricao",
+            ""
+        )
+    ).strip()
+
+    localizacao = str(
+        dados.get(
+            "localizacao",
+            ""
+        )
+    ).strip()
+
+    if not descricao:
+
+        return jsonify({
+            "erro": "Descreva o site que você deseja criar."
+        }), 400
+
+    if len(descricao) > 5000:
+
+        return jsonify({
+            "erro": "A descrição do site é muito grande."
+        }), 400
+
+    if len(localizacao) > 500:
+
+        return jsonify({
+            "erro": "A localização informada é muito grande."
+        }), 400
+
+
+    # -----------------------------------------------------
+    # INSTRUÇÕES PARA A IA
+    # -----------------------------------------------------
+
+    contexto_localizacao = ""
+
+    if localizacao:
+
+        contexto_localizacao = f"""
+Localização informada pelo usuário:
+
+{localizacao}
+
+Use essa localização somente como informação
+fornecida pelo usuário.
+
+Não invente endereço, telefone, horário,
+preços, avaliações ou qualquer outro dado.
+"""
+
+
+    prompt = f"""
+Você é um gerador de páginas web.
+
+Crie um site completo usando HTML, CSS e JavaScript.
+
+DESCRIÇÃO DO SITE:
+
+{descricao}
+
+{contexto_localizacao}
+
+REGRAS:
+
+1. Gere somente código HTML.
+2. O CSS deve estar dentro de uma tag <style>.
+3. O JavaScript deve estar dentro de uma tag <script>.
+4. O site deve ser responsivo.
+5. O visual deve ser moderno e profissional.
+6. Não invente informações específicas sobre empresas.
+7. Quando uma informação não for fornecida,
+   use textos genéricos ou espaços reservados.
+8. Não use Markdown.
+9. Não coloque ```html.
+10. O resultado deve começar diretamente com <!DOCTYPE html>.
+"""
+
+
+    mensagens_site = [
+        {
+            "role": "system",
+            "content": """
+Você é uma inteligência artificial especializada
+em criação de sites.
+
+Sua tarefa é gerar páginas HTML completas,
+modernas, responsivas e funcionais.
+
+Respeite rigorosamente as informações fornecidas
+pelo usuário.
+
+Nunca invente informações específicas.
+"""
+        },
+        {
+            "role": "user",
+            "content": prompt
+        }
+    ]
+
+
+    # -----------------------------------------------------
+    # GERAR SITE
+    # -----------------------------------------------------
+
+    try:
+
+        resultado = ia(
+            mensagens_site,
+            max_new_tokens=900,
+            do_sample=False
+        )
+
+        site_html = (
+            resultado[0]
+            ["generated_text"]
+            [-1]
+            ["content"]
+        ).strip()
+
+    except Exception as erro:
+
+        print(
+            "ERRO AO GERAR SITE:",
+            erro,
+            flush=True
+        )
+
+        return jsonify({
+            "erro": "Não foi possível gerar o site."
+        }), 500
+
+
+    # -----------------------------------------------------
+    # LIMPAR MARKDOWN CASO A IA USE
+    # -----------------------------------------------------
+
+    if site_html.startswith("```html"):
+
+        site_html = site_html[
+            len("```html"):
+        ].strip()
+
+    elif site_html.startswith("```"):
+
+        site_html = site_html[
+            len("```"):
+        ].strip()
+
+
+    if site_html.endswith("```"):
+
+        site_html = site_html[
+            :-3
+        ].strip()
+
+
+    # -----------------------------------------------------
+    # VERIFICAÇÃO BÁSICA
+    # -----------------------------------------------------
+
+    if "<html" not in site_html.lower():
+
+        return jsonify({
+            "erro": (
+                "A IA não conseguiu gerar "
+                "um HTML válido."
+            )
+        }), 500
+
+
+    return jsonify({
+        "sucesso": True,
+        "site": site_html
+    })
+
+# =========================================================
 # INICIAR SERVIDOR
 # =========================================================
 
 if __name__ == "__main__":
+
     app.run(
         host="0.0.0.0",
-        port=int(os.environ.get("PORT", 5000)),
+        port=int(
+            os.environ.get(
+                "PORT",
+                5000
+            )
+        ),
         debug=True
     )

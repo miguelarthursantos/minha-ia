@@ -1,0 +1,2110 @@
+[1mdiff --git a/app.py b/app.py[m
+[1mindex 9f9a65c..92c149a 100644[m
+[1m--- a/app.py[m
+[1m+++ b/app.py[m
+[36m@@ -1,6 +1,9 @@[m
+ import os[m
+[32m+[m[32mimport re[m
+ import sqlite3[m
+ import uuid[m
+[32m+[m[32mimport unicodedata[m
+[32m+[m
+ from datetime import datetime[m
+ from functools import wraps[m
+ [m
+[36m@@ -9,22 +12,23 @@[m [mfrom flask import ([m
+     render_template,[m
+     request,[m
+     jsonify,[m
+[31m-    session,[m
+[31m-    redirect,[m
+[31m-    url_for[m
+[32m+[m[32m    session[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mfrom werkzeug.security import ([m
+[32m+[m[32m    generate_password_hash,[m
+[32m+[m[32m    check_password_hash[m
+ )[m
+ [m
+[31m-from werkzeug.security import generate_password_hash, check_password_hash[m
+ from werkzeug.utils import secure_filename[m
+ [m
+ from transformers import pipeline[m
+ from pypdf import PdfReader[m
+[31m-import markdown[m
+ [m
+ [m
+[31m-# ==========================================[m
+[31m-# CONFIGURAÇÕES[m
+[31m-# ==========================================[m
+[32m+[m[32m# =========================================================[m
+[32m+[m[32m# CONFIGURAÇÃO[m
+[32m+[m[32m# =========================================================[m
+ [m
+ app = Flask(__name__)[m
+ [m
+[36m@@ -39,22 +43,25 @@[m [mapp.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024[m
+ os.makedirs(UPLOAD_FOLDER, exist_ok=True)[m
+ [m
+ [m
+[31m-# ==========================================[m
+[32m+[m[32m# =========================================================[m
+ # BANCO DE DADOS[m
+[31m-# ==========================================[m
+[32m+[m[32m# =========================================================[m
+ [m
+ def conectar():[m
+[32m+[m
+     conexao = sqlite3.connect(DATABASE)[m
+[32m+[m
+     conexao.row_factory = sqlite3.Row[m
+[32m+[m
+     return conexao[m
+ [m
+ [m
+ def criar_banco():[m
+ [m
+     conexao = conectar()[m
+[31m-    cursor = conexao.cursor()[m
+ [m
+[31m-    cursor.execute("""[m
+[32m+[m[32m    # USUÁRIOS[m
+[32m+[m[32m    conexao.execute("""[m
+         CREATE TABLE IF NOT EXISTS usuarios ([m
+             id INTEGER PRIMARY KEY AUTOINCREMENT,[m
+             usuario TEXT UNIQUE NOT NULL,[m
+[36m@@ -62,72 +69,74 @@[m [mdef criar_banco():[m
+         )[m
+     """)[m
+ [m
+[31m-    cursor.execute("""[m
+[32m+[m[32m    # CONVERSAS[m
+[32m+[m[32m    conexao.execute("""[m
+         CREATE TABLE IF NOT EXISTS conversas ([m
+             id INTEGER PRIMARY KEY AUTOINCREMENT,[m
+             usuario_id INTEGER NOT NULL,[m
+[31m-            titulo TEXT DEFAULT 'Nova conversa',[m
+[31m-            criada_em TEXT,[m
+[31m-            FOREIGN KEY(usuario_id) REFERENCES usuarios(id)[m
+[32m+[m[32m            titulo TEXT,[m
+[32m+[m[32m            criada_em TEXT[m
+         )[m
+     """)[m
+ [m
+[31m-    cursor.execute("""[m
+[32m+[m[32m    # MENSAGENS[m
+[32m+[m[32m    conexao.execute("""[m
+         CREATE TABLE IF NOT EXISTS mensagens ([m
+             id INTEGER PRIMARY KEY AUTOINCREMENT,[m
+             conversa_id INTEGER NOT NULL,[m
+             papel TEXT NOT NULL,[m
+             conteudo TEXT NOT NULL,[m
+[31m-            criada_em TEXT,[m
+[31m-            FOREIGN KEY(conversa_id) REFERENCES conversas(id)[m
+[32m+[m[32m            criada_em TEXT[m
+         )[m
+     """)[m
+ [m
+[31m-    cursor.execute("""[m
+[32m+[m[32m    # MEMÓRIA[m
+[32m+[m[32m    conexao.execute("""[m
+         CREATE TABLE IF NOT EXISTS memoria ([m
+             id INTEGER PRIMARY KEY AUTOINCREMENT,[m
+             usuario_id INTEGER NOT NULL,[m
+[31m-            informacao TEXT NOT NULL,[m
+[31m-            FOREIGN KEY(usuario_id) REFERENCES usuarios(id)[m
+[32m+[m[32m            informacao TEXT NOT NULL[m
+         )[m
+     """)[m
+ [m
+[31m-    cursor.execute("""[m
+[32m+[m[32m    # DOCUMENTOS[m
+[32m+[m[32m    conexao.execute("""[m
+         CREATE TABLE IF NOT EXISTS documentos ([m
+             id INTEGER PRIMARY KEY AUTOINCREMENT,[m
+             usuario_id INTEGER NOT NULL,[m
+             nome TEXT NOT NULL,[m
+             caminho TEXT NOT NULL,[m
+             texto TEXT,[m
+[31m-            enviado_em TEXT,[m
+[31m-            FOREIGN KEY(usuario_id) REFERENCES usuarios(id)[m
+[32m+[m[32m            enviado_em TEXT[m
+         )[m
+     """)[m
+ [m
+     conexao.commit()[m
+[32m+[m
+     conexao.close()[m
+ [m
+ [m
+ criar_banco()[m
+ [m
+ [m
+[31m-# ==========================================[m
+[32m+[m[32m# =========================================================[m
+ # IA[m
+[31m-# ==========================================[m
+[32m+[m[32m# =========================================================[m
+ [m
+ print("Carregando a IA...")[m
+ [m
+ ia = pipeline([m
+     "text-generation",[m
+[31m-    model="Qwen/Qwen2.5-0.5B-Instruct"[m
+[32m+[m[32m    model="Qwen/Qwen2.5-0.5B-Instruct",[m
+[32m+[m[32m    device=-1[m
+ )[m
+ [m
+ print("IA carregada!")[m
+ [m
+ [m
+[31m-# ==========================================[m
+[31m-# LOGIN[m
+[31m-# ==========================================[m
+[32m+[m[32m# =========================================================[m
+[32m+[m[32m# LOGIN OBRIGATÓRIO[m
+[32m+[m[32m# =========================================================[m
+ [m
+ def login_obrigatorio(funcao):[m
+ [m
+[36m@@ -135,6 +144,7 @@[m [mdef login_obrigatorio(funcao):[m
+     def verificar(*args, **kwargs):[m
+ [m
+         if "usuario_id" not in session:[m
+[32m+[m
+             return jsonify({[m
+                 "erro": "Você precisa estar logado."[m
+             }), 401[m
+[36m@@ -144,142 +154,229 @@[m [mdef login_obrigatorio(funcao):[m
+     return verificar[m
+ [m
+ [m
+[31m-# ==========================================[m
+[32m+[m[32m# =========================================================[m
+[32m+[m[32m# MEMÓRIA[m
+[32m+[m[32m# =========================================================[m
+[32m+[m
+[32m+[m[32mdef pegar_memoria():[m
+[32m+[m
+[32m+[m[32m    if "usuario_id" not in session:[m
+[32m+[m[32m        return [][m
+[32m+[m
+[32m+[m[32m    conexao = conectar()[m
+[32m+[m
+[32m+[m[32m    memoria = conexao.execute([m
+[32m+[m[32m        """[m
+[32m+[m[32m        SELECT informacao[m
+[32m+[m[32m        FROM memoria[m
+[32m+[m[32m        WHERE usuario_id = ?[m
+[32m+[m[32m        ORDER BY id DESC[m
+[32m+[m[32m        """,[m
+[32m+[m[32m        (session["usuario_id"],)[m
+[32m+[m[32m    ).fetchall()[m
+[32m+[m
+[32m+[m[32m    conexao.close()[m
+[32m+[m
+[32m+[m[32m    return [[m
+[32m+[m[32m        item["informacao"][m
+[32m+[m[32m        for item in memoria[m
+[32m+[m[32m    ][m
+[32m+[m
+[32m+[m
+[32m+[m[32m# =========================================================[m
+ # PÁGINA PRINCIPAL[m
+[31m-# ==========================================[m
+[32m+[m[32m# =========================================================[m
+ [m
+ @app.route("/")[m
+ def inicio():[m
+ [m
+[31m-    if "usuario_id" not in session:[m
+[31m-        return redirect(url_for("login"))[m
+[31m-[m
+     return render_template("index.html")[m
+ [m
+[31m-# ==========================================[m
+[31m-# VERIFICAR USUÁRIO[m
+[31m-# ==========================================[m
+[32m+[m
+[32m+[m[32m# =========================================================[m
+[32m+[m[32m# USUÁRIO[m
+[32m+[m[32m# =========================================================[m
+ [m
+ @app.route("/usuario")[m
+ def usuario():[m
+ [m
+[31m-    if "usuario_id" in session:[m
+[32m+[m[32m    if "usuario_id" not in session:[m
+[32m+[m
+         return jsonify({[m
+[31m-            "logado": True,[m
+[31m-            "usuario": session.get("usuario")[m
+[32m+[m[32m            "logado": False[m
+         })[m
+ [m
+     return jsonify({[m
+[31m-        "logado": False[m
+[32m+[m[32m        "logado": True,[m
+[32m+[m[32m        "usuario": session.get("usuario"),[m
+[32m+[m[32m        "usuario_id": session.get("usuario_id")[m
+     })[m
+[31m-# ==========================================[m
+[31m-# LOGIN[m
+[31m-# ==========================================[m
+ [m
+ [m
+[31m-@app.route("/login", methods=["GET", "POST"])[m
+[31m-def login():[m
+[32m+[m[32m# =========================================================[m
+[32m+[m[32m# CADASTRO[m
+[32m+[m[32m# =========================================================[m
+[32m+[m
+[32m+[m[32m@app.route("/cadastro", methods=["POST"])[m
+[32m+[m[32mdef cadastro():[m
+[32m+[m
+[32m+[m[32m    dados = request.get_json() or {}[m
+[32m+[m
+[32m+[m[32m    usuario = dados.get([m
+[32m+[m[32m        "usuario",[m
+[32m+[m[32m        ""[m
+[32m+[m[32m    ).strip()[m
+[32m+[m
+[32m+[m[32m    senha = dados.get([m
+[32m+[m[32m        "senha",[m
+[32m+[m[32m        ""[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    if not usuario or not senha:[m
+[32m+[m
+[32m+[m[32m        return jsonify({[m
+[32m+[m[32m            "erro": "Preencha usuário e senha."[m
+[32m+[m[32m        }), 400[m
+[32m+[m
+[32m+[m[32m    if len(usuario) < 3:[m
+ [m
+[31m-    if request.method == "GET":[m
+[31m-        return render_template("index.html", tela_login=True)[m
+[32m+[m[32m        return jsonify({[m
+[32m+[m[32m            "erro": "O usuário precisa ter pelo menos 3 caracteres."[m
+[32m+[m[32m        }), 400[m
+ [m
+[31m-    dados = request.get_json()[m
+[32m+[m[32m    if len(senha) < 4:[m
+ [m
+[31m-    usuario = dados.get("usuario", "").strip()[m
+[31m-    senha = dados.get("senha", "")[m
+[32m+[m[32m        return jsonify({[m
+[32m+[m[32m            "erro": "A senha precisa ter pelo menos 4 caracteres."[m
+[32m+[m[32m        }), 400[m
+ [m
+     conexao = conectar()[m
+ [m
+[31m-    pessoa = conexao.execute([m
+[31m-        "SELECT * FROM usuarios WHERE usuario = ?",[m
+[32m+[m[32m    usuario_existente = conexao.execute([m
+[32m+[m[32m        """[m
+[32m+[m[32m        SELECT id[m
+[32m+[m[32m        FROM usuarios[m
+[32m+[m[32m        WHERE usuario = ?[m
+[32m+[m[32m        """,[m
+         (usuario,)[m
+     ).fetchone()[m
+ [m
+[31m-    conexao.close()[m
+[32m+[m[32m    if usuario_existente:[m
+ [m
+[31m-    if not pessoa or not check_password_hash(pessoa["senha"], senha):[m
+[32m+[m[32m        conexao.close()[m
+ [m
+         return jsonify({[m
+[31m-            "erro": "Usuário ou senha incorretos."[m
+[31m-        }), 401[m
+[32m+[m[32m            "erro": "Esse usuário já existe."[m
+[32m+[m[32m        }), 400[m
+[32m+[m
+[32m+[m[32m    senha_hash = generate_password_hash(senha)[m
+[32m+[m
+[32m+[m[32m    cursor = conexao.execute([m
+[32m+[m[32m        """[m
+[32m+[m[32m        INSERT INTO usuarios[m
+[32m+[m[32m        (usuario, senha)[m
+[32m+[m[32m        VALUES (?, ?)[m
+[32m+[m[32m        """,[m
+[32m+[m[32m        ([m
+[32m+[m[32m            usuario,[m
+[32m+[m[32m            senha_hash[m
+[32m+[m[32m        )[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    conexao.commit()[m
+[32m+[m
+[32m+[m[32m    usuario_id = cursor.lastrowid[m
+[32m+[m
+[32m+[m[32m    conexao.close()[m
+ [m
+[31m-    session["usuario_id"] = pessoa["id"][m
+[31m-    session["usuario"] = pessoa["usuario"][m
+[32m+[m[32m    session["usuario_id"] = usuario_id[m
+[32m+[m[32m    session["usuario"] = usuario[m
+ [m
+     return jsonify({[m
+[31m-        "sucesso": True[m
+[32m+[m[32m        "sucesso": True,[m
+[32m+[m[32m        "mensagem": "Cadastro realizado com sucesso!"[m
+     })[m
+ [m
+ [m
+[31m-# ==========================================[m
+[31m-# CADASTRO[m
+[31m-# ==========================================[m
+[32m+[m[32m# =========================================================[m
+[32m+[m[32m# LOGIN[m
+[32m+[m[32m# =========================================================[m
+ [m
+[31m-@app.route("/cadastro", methods=["POST"])[m
+[31m-def cadastro():[m
+[32m+[m[32m@app.route("/login", methods=["POST"])[m
+[32m+[m[32mdef login():[m
+ [m
+[31m-    dados = request.get_json()[m
+[32m+[m[32m    dados = request.get_json() or {}[m
+ [m
+[31m-    usuario = dados.get("usuario", "").strip()[m
+[31m-    senha = dados.get("senha", "")[m
+[32m+[m[32m    usuario = dados.get([m
+[32m+[m[32m        "usuario",[m
+[32m+[m[32m        ""[m
+[32m+[m[32m    ).strip()[m
+ [m
+[31m-    if len(usuario) < 3:[m
+[31m-        return jsonify({[m
+[31m-            "erro": "O usuário precisa ter pelo menos 3 caracteres."[m
+[31m-        }), 400[m
+[32m+[m[32m    senha = dados.get([m
+[32m+[m[32m        "senha",[m
+[32m+[m[32m        ""[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    if not usuario or not senha:[m
+ [m
+[31m-    if len(senha) < 4:[m
+         return jsonify({[m
+[31m-            "erro": "A senha precisa ter pelo menos 4 caracteres."[m
+[32m+[m[32m            "erro": "Preencha usuário e senha."[m
+         }), 400[m
+ [m
+     conexao = conectar()[m
+ [m
+[31m-    try:[m
+[32m+[m[32m    usuario_banco = conexao.execute([m
+[32m+[m[32m        """[m
+[32m+[m[32m        SELECT *[m
+[32m+[m[32m        FROM usuarios[m
+[32m+[m[32m        WHERE usuario = ?[m
+[32m+[m[32m        """,[m
+[32m+[m[32m        (usuario,)[m
+[32m+[m[32m    ).fetchone()[m
+ [m
+[31m-        conexao.execute([m
+[31m-            """[m
+[31m-            INSERT INTO usuarios (usuario, senha)[m
+[31m-            VALUES (?, ?)[m
+[31m-            """,[m
+[31m-            ([m
+[31m-                usuario,[m
+[31m-                generate_password_hash(senha)[m
+[31m-            )[m
+[31m-        )[m
+[32m+[m[32m    conexao.close()[m
+ [m
+[31m-        conexao.commit()[m
+[32m+[m[32m    if not usuario_banco:[m
+ [m
+[31m-    except sqlite3.IntegrityError:[m
+[32m+[m[32m        return jsonify({[m
+[32m+[m[32m            "erro": "Usuário ou senha incorretos."[m
+[32m+[m[32m        }), 401[m
+ [m
+[31m-        conexao.close()[m
+[32m+[m[32m    if not check_password_hash([m
+[32m+[m[32m        usuario_banco["senha"],[m
+[32m+[m[32m        senha[m
+[32m+[m[32m    ):[m
+ [m
+         return jsonify({[m
+[31m-            "erro": "Esse usuário já existe."[m
+[31m-        }), 400[m
+[32m+[m[32m            "erro": "Usuário ou senha incorretos."[m
+[32m+[m[32m        }), 401[m
+ [m
+[31m-    conexao.close()[m
+[32m+[m[32m    session["usuario_id"] = usuario_banco["id"][m
+[32m+[m[32m    session["usuario"] = usuario_banco["usuario"][m
+ [m
+     return jsonify({[m
+[31m-        "sucesso": True[m
+[32m+[m[32m        "sucesso": True,[m
+[32m+[m[32m        "mensagem": "Login realizado com sucesso!"[m
+     })[m
+ [m
+ [m
+[31m-# ==========================================[m
+[32m+[m[32m# =========================================================[m
+ # LOGOUT[m
+[31m-# ==========================================[m
+[32m+[m[32m# =========================================================[m
+ [m
+ @app.route("/logout")[m
+ def logout():[m
+ [m
+     session.clear()[m
+ [m
+[31m-    return redirect(url_for("login"))[m
+[32m+[m[32m    return jsonify({[m
+[32m+[m[32m        "sucesso": True[m
+[32m+[m[32m    })[m
+ [m
+ [m
+[31m-# ==========================================[m
+[32m+[m[32m# =========================================================[m
+ # LISTAR CONVERSAS[m
+[31m-# ==========================================[m
+[32m+[m[32m# =========================================================[m
+ [m
+ @app.route("/conversas")[m
+ @login_obrigatorio[m
+[36m@@ -289,7 +386,7 @@[m [mdef conversas():[m
+ [m
+     lista = conexao.execute([m
+         """[m
+[31m-        SELECT id, titulo[m
+[32m+[m[32m        SELECT id, titulo, criada_em[m
+         FROM conversas[m
+         WHERE usuario_id = ?[m
+         ORDER BY id DESC[m
+[36m@@ -302,15 +399,16 @@[m [mdef conversas():[m
+     return jsonify([[m
+         {[m
+             "id": conversa["id"],[m
+[31m-            "titulo": conversa["titulo"][m
+[32m+[m[32m            "titulo": conversa["titulo"],[m
+[32m+[m[32m            "criada_em": conversa["criada_em"][m
+         }[m
+         for conversa in lista[m
+     ])[m
+ [m
+ [m
+[31m-# ==========================================[m
+[32m+[m[32m# =========================================================[m
+ # NOVA CONVERSA[m
+[31m-# ==========================================[m
+[32m+[m[32m# =========================================================[m
+ [m
+ @app.route("/nova_conversa", methods=["POST"])[m
+ @login_obrigatorio[m
+[36m@@ -340,17 +438,18 @@[m [mdef nova_conversa():[m
+     session["conversa_id"] = conversa_id[m
+ [m
+     return jsonify({[m
+[31m-        "id": conversa_id[m
+[32m+[m[32m        "sucesso": True,[m
+[32m+[m[32m        "conversa_id": conversa_id[m
+     })[m
+ [m
+ [m
+[31m-# ==========================================[m
+[31m-# CARREGAR CONVERSA[m
+[31m-# ==========================================[m
+[32m+[m[32m# =========================================================[m
+[32m+[m[32m# ABRIR CONVERSA[m
+[32m+[m[32m# =========================================================[m
+ [m
+ @app.route("/conversa/<int:conversa_id>")[m
+ @login_obrigatorio[m
+[31m-def carregar_conversa(conversa_id):[m
+[32m+[m[32mdef abrir_conversa(conversa_id):[m
+ [m
+     conexao = conectar()[m
+ [m
+[36m@@ -358,7 +457,8 @@[m [mdef carregar_conversa(conversa_id):[m
+         """[m
+         SELECT *[m
+         FROM conversas[m
+[31m-        WHERE id = ? AND usuario_id = ?[m
+[32m+[m[32m        WHERE id = ?[m
+[32m+[m[32m        AND usuario_id = ?[m
+         """,[m
+         ([m
+             conversa_id,[m
+[36m@@ -376,10 +476,10 @@[m [mdef carregar_conversa(conversa_id):[m
+ [m
+     mensagens = conexao.execute([m
+         """[m
+[31m-        SELECT papel, conteudo[m
+[32m+[m[32m        SELECT papel, conteudo, criada_em[m
+         FROM mensagens[m
+         WHERE conversa_id = ?[m
+[31m-        ORDER BY id[m
+[32m+[m[32m        ORDER BY id ASC[m
+         """,[m
+         (conversa_id,)[m
+     ).fetchall()[m
+[36m@@ -389,303 +489,724 @@[m [mdef carregar_conversa(conversa_id):[m
+     session["conversa_id"] = conversa_id[m
+ [m
+     return jsonify({[m
+[31m-        "titulo": conversa["titulo"],[m
+[32m+[m[32m        "conversa": {[m
+[32m+[m[32m            "id": conversa["id"],[m
+[32m+[m[32m            "titulo": conversa["titulo"],[m
+[32m+[m[32m            "criada_em": conversa["criada_em"][m
+[32m+[m[32m        },[m
+[32m+[m
+         "mensagens": [[m
+             {[m
+                 "papel": mensagem["papel"],[m
+[31m-                "conteudo": mensagem["conteudo"][m
+[32m+[m[32m                "conteudo": mensagem["conteudo"],[m
+[32m+[m[32m                "criada_em": mensagem["criada_em"][m
+             }[m
+             for mensagem in mensagens[m
+         ][m
+     })[m
+ [m
+ [m
+[31m-# ==========================================[m
+[32m+[m[32m# =========================================================[m
+ # MEMÓRIA[m
+[31m-# ==========================================[m
+[32m+[m[32m# =========================================================[m
+ [m
+[31m-def pegar_memoria():[m
+[32m+[m[32m@app.route("/memoria")[m
+[32m+[m[32m@login_obrigatorio[m
+[32m+[m[32mdef memoria():[m
+ [m
+[31m-    conexao = conectar()[m
+[32m+[m[32m    return jsonify({[m
+[32m+[m[32m        "memoria": pegar_memoria()[m
+[32m+[m[32m    })[m
+ [m
+[31m-    memorias = conexao.execute([m
+[31m-        """[m
+[31m-        SELECT informacao[m
+[31m-        FROM memoria[m
+[31m-        WHERE usuario_id = ?[m
+[31m-        ORDER BY id DESC[m
+[31m-        LIMIT 20[m
+[31m-        """,[m
+[31m-        (session["usuario_id"],)[m
+[31m-    ).fetchall()[m
+ [m
+[31m-    conexao.close()[m
+[32m+[m[32m# =========================================================[m
+[32m+[m[32m# NORMALIZAR TEXTO[m
+[32m+[m[32m# =========================================================[m
+ [m
+[31m-    return [[m
+[31m-        memoria["informacao"][m
+[31m-        for memoria in memorias[m
+[31m-    ][m
+[32m+[m[32mdef normalizar_texto(texto):[m
+ [m
+[32m+[m[32m    if not texto:[m
+[32m+[m[32m        return ""[m
+ [m
+[31m-@app.route("/memoria", methods=["GET", "POST"])[m
+[31m-@login_obrigatorio[m
+[31m-def memoria():[m
+[32m+[m[32m    texto = texto.lower()[m
+ [m
+[31m-    if request.method == "GET":[m
+[32m+[m[32m    texto = unicodedata.normalize([m
+[32m+[m[32m        "NFD",[m
+[32m+[m[32m        texto[m
+[32m+[m[32m    )[m
+ [m
+[31m-        return jsonify({[m
+[31m-            "memoria": pegar_memoria()[m
+[31m-        })[m
+[32m+[m[32m    texto = "".join([m
+[32m+[m[32m        caractere[m
+[32m+[m[32m        for caractere in texto[m
+[32m+[m[32m        if unicodedata.category(caractere) != "Mn"[m
+[32m+[m[32m    )[m
+ [m
+[31m-    dados = request.get_json()[m
+[32m+[m[32m    texto = re.sub([m
+[32m+[m[32m        r"[^a-z0-9\s]",[m
+[32m+[m[32m        " ",[m
+[32m+[m[32m        texto[m
+[32m+[m[32m    )[m
+ [m
+[31m-    informacao = dados.get("informacao", "").strip()[m
+[32m+[m[32m    texto = re.sub([m
+[32m+[m[32m        r"\s+",[m
+[32m+[m[32m        " ",[m
+[32m+[m[32m        texto[m
+[32m+[m[32m    )[m
+ [m
+[31m-    if not informacao:[m
+[32m+[m[32m    return texto.strip()[m
+[32m+[m
+[32m+[m
+[32m+[m[32m# =========================================================[m
+[32m+[m[32m# PALAVRAS IMPORTANTES[m
+[32m+[m[32m# =========================================================[m
+[32m+[m
+[32m+[m[32mdef palavras_importantes(texto):[m
+[32m+[m
+[32m+[m[32m    texto = normalizar_texto(texto)[m
+[32m+[m
+[32m+[m[32m    palavras = texto.split()[m
+[32m+[m
+[32m+[m[32m    palavras_ignoradas = {[m
+[32m+[m[32m        "qual",[m
+[32m+[m[32m        "quais",[m
+[32m+[m[32m        "como",[m
+[32m+[m[32m        "onde",[m
+[32m+[m[32m        "quando",[m
+[32m+[m[32m        "porque",[m
+[32m+[m[32m        "porquê",[m
+[32m+[m[32m        "para",[m
+[32m+[m[32m        "uma",[m
+[32m+[m[32m        "umas",[m
+[32m+[m[32m        "um",[m
+[32m+[m[32m        "uns",[m
+[32m+[m[32m        "que",[m
+[32m+[m[32m        "quem",[m
+[32m+[m[32m        "sobre",[m
+[32m+[m[32m        "esse",[m
+[32m+[m[32m        "essa",[m
+[32m+[m[32m        "isso",[m
+[32m+[m[32m        "este",[m
+[32m+[m[32m        "esta",[m
+[32m+[m[32m        "isto",[m
+[32m+[m[32m        "dos",[m
+[32m+[m[32m        "das",[m
+[32m+[m[32m        "do",[m
+[32m+[m[32m        "da",[m
+[32m+[m[32m        "de",[m
+[32m+[m[32m        "e",[m
+[32m+[m[32m        "ou",[m
+[32m+[m[32m        "a",[m
+[32m+[m[32m        "o",[m
+[32m+[m[32m        "as",[m
+[32m+[m[32m        "os",[m
+[32m+[m[32m        "em",[m
+[32m+[m[32m        "no",[m
+[32m+[m[32m        "na",[m
+[32m+[m[32m        "nos",[m
+[32m+[m[32m        "nas",[m
+[32m+[m[32m        "ao",[m
+[32m+[m[32m        "aos",[m
+[32m+[m[32m        "me",[m
+[32m+[m[32m        "se",[m
+[32m+[m[32m        "tem",[m
+[32m+[m[32m        "ter",[m
+[32m+[m[32m        "pdf",[m
+[32m+[m[32m        "documento",[m
+[32m+[m[32m        "principal",[m
+[32m+[m[32m        "assunto",[m
+[32m+[m[32m        "tema"[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    resultado = [][m
+[32m+[m
+[32m+[m[32m    for palavra in palavras:[m
+[32m+[m
+[32m+[m[32m        if len(palavra) < 3:[m
+[32m+[m[32m            continue[m
+ [m
+[31m-        return jsonify({[m
+[31m-            "erro": "Digite uma informação."[m
+[31m-        }), 400[m
+[32m+[m[32m        if palavra in palavras_ignoradas:[m
+[32m+[m[32m            continue[m
+ [m
+[31m-    conexao = conectar()[m
+[32m+[m[32m        if palavra not in resultado:[m
+ [m
+[31m-    conexao.execute([m
+[31m-        """[m
+[31m-        INSERT INTO memoria[m
+[31m-        (usuario_id, informacao)[m
+[31m-        VALUES (?, ?)[m
+[31m-        """,[m
+[31m-        ([m
+[31m-            session["usuario_id"],[m
+[31m-            informacao[m
+[31m-        )[m
+[31m-    )[m
+[32m+[m[32m            resultado.append([m
+[32m+[m[32m                palavra[m
+[32m+[m[32m            )[m
+ [m
+[31m-    conexao.commit()[m
+[31m-    conexao.close()[m
+[32m+[m[32m    return resultado[m
+ [m
+[31m-    return jsonify({[m
+[31m-        "sucesso": True[m
+[31m-    })[m
+ [m
+[31m-@app.route("/perguntar", methods=["POST"])[m
+[31m-@login_obrigatorio[m
+[31m-def perguntar():[m
+[32m+[m[32m# =========================================================[m
+[32m+[m[32m# IDENTIFICAR NOME DO PDF NA PERGUNTA[m
+[32m+[m[32m# =========================================================[m
+ [m
+[31m-    dados = request.get_json() or {}[m
+[31m-    pergunta = dados.get("pergunta", "").strip()[m
+[32m+[m[32mdef encontrar_documento_mencionado([m
+[32m+[m[32m    pergunta,[m
+[32m+[m[32m    documentos[m
+[32m+[m[32m):[m
+ [m
+[31m-    if not pergunta:[m
+[31m-        return jsonify({[m
+[31m-            "erro": "Digite uma pergunta."[m
+[31m-        }), 400[m
+[32m+[m[32m    pergunta_normalizada = normalizar_texto([m
+[32m+[m[32m        pergunta[m
+[32m+[m[32m    )[m
+ [m
+[31m-    # ==========================================[m
+[31m-    # CONVERSA[m
+[31m-    # ==========================================[m
+[32m+[m[32m    melhor_documento = None[m
+ [m
+[31m-    conversa_id = session.get("conversa_id")[m
+[32m+[m[32m    maior_pontuacao = 0[m
+ [m
+[31m-    if not conversa_id:[m
+[32m+[m[32m    for documento in documentos:[m
+ [m
+[31m-        conexao = conectar()[m
+[32m+[m[32m        nome = documento["nome"][m
+ [m
+[31m-        cursor = conexao.execute([m
+[31m-            """[m
+[31m-            INSERT INTO conversas[m
+[31m-            (usuario_id, titulo, criada_em)[m
+[31m-            VALUES (?, ?, ?)[m
+[31m-            """,[m
+[31m-            ([m
+[31m-                session["usuario_id"],[m
+[31m-                pergunta[:40],[m
+[31m-                datetime.now().isoformat()[m
+[31m-            )[m
+[32m+[m[32m        nome_normalizado = normalizar_texto([m
+[32m+[m[32m            nome[m
+         )[m
+ [m
+[31m-        conexao.commit()[m
+[32m+[m[32m        nome_sem_pdf = nome_normalizado.replace([m
+[32m+[m[32m            " pdf",[m
+[32m+[m[32m            ""[m
+[32m+[m[32m        )[m
+ [m
+[31m-        conversa_id = cursor.lastrowid[m
+[32m+[m[32m        pontos = 0[m
+ [m
+[31m-        conexao.close()[m
+[32m+[m[32m        if nome_normalizado in pergunta_normalizada:[m
+ [m
+[31m-        session["conversa_id"] = conversa_id[m
+[32m+[m[32m            pontos += 100[m
+ [m
+[31m-    # ==========================================[m
+[31m-    # BANCO DE DADOS[m
+[31m-    # ==========================================[m
+[32m+[m[32m        if nome_sem_pdf in pergunta_normalizada:[m
+ [m
+[31m-    conexao = conectar()[m
+[32m+[m[32m            pontos += 80[m
+ [m
+[31m-    historico = conexao.execute([m
+[31m-        """[m
+[31m-        SELECT papel, conteudo[m
+[31m-        FROM mensagens[m
+[31m-        WHERE conversa_id = ?[m
+[31m-        ORDER BY id DESC[m
+[31m-        LIMIT 8[m
+[31m-        """,[m
+[31m-        (conversa_id,)[m
+[31m-    ).fetchall()[m
+[32m+[m[32m        partes = nome_sem_pdf.split()[m
+ [m
+[31m-    documentos = conexao.execute([m
+[31m-        """[m
+[31m-        SELECT nome, texto[m
+[31m-        FROM documentos[m
+[31m-        WHERE usuario_id = ?[m
+[31m-        """,[m
+[31m-        (session["usuario_id"],)[m
+[31m-    ).fetchall()[m
+[32m+[m[32m        for parte in partes:[m
+ [m
+[31m-    conexao.close()[m
+[32m+[m[32m            if len(parte) >= 4 and parte in pergunta_normalizada:[m
+ [m
+[31m-    historico = list(reversed(historico))[m
+[32m+[m[32m                pontos += 5[m
+ [m
+[31m-    # ==========================================[m
+[31m-    # BUSCA NOS PDFs[m
+[31m-    # ==========================================[m
+[32m+[m[32m        if pontos > maior_pontuacao:[m
+ [m
+[31m-    palavras = [][m
+[32m+[m[32m            maior_pontuacao = pontos[m
+ [m
+[31m-    for palavra in pergunta.lower().split():[m
+[32m+[m[32m            melhor_documento = documento[m
+ [m
+[31m-        palavra = palavra.strip([m
+[31m-            ".,!?;:\"'()[]{}"[m
+[31m-        )[m
+[32m+[m[32m    return melhor_documento[m
+ [m
+[31m-        if len(palavra) >= 3:[m
+[31m-            palavras.append(palavra)[m
+ [m
+[31m-    trechos = [][m
+[32m+[m[32m# =========================================================[m
+[32m+[m[32m# IDENTIFICAR TIPO DE PERGUNTA SOBRE PDF[m
+[32m+[m[32m# =========================================================[m
+ [m
+[31m-    for documento in documentos:[m
+[32m+[m[32mdef identificar_tipo_pergunta(pergunta):[m
+ [m
+[31m-        nome = documento["nome"][m
+[31m-        texto = documento["texto"] or ""[m
+[32m+[m[32m    texto = normalizar_texto([m
+[32m+[m[32m        pergunta[m
+[32m+[m[32m    )[m
+ [m
+[31m-        if not texto.strip():[m
+[31m-            continue[m
+[32m+[m[32m    tipos = {[m
+[32m+[m[32m        "titulo": False,[m
+[32m+[m[32m        "assunto": False,[m
+[32m+[m[32m        "objetivo": False,[m
+[32m+[m[32m        "resumo": False,[m
+[32m+[m[32m        "primeiro_paragrafo": False[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    if ([m
+[32m+[m[32m        "titulo" in texto[m
+[32m+[m[32m        or "nome do pdf" in texto[m
+[32m+[m[32m    ):[m
+[32m+[m[32m        tipos["titulo"] = True[m
+[32m+[m
+[32m+[m[32m    if ([m
+[32m+[m[32m        "assunto" in texto[m
+[32m+[m[32m        or "tema principal" in texto[m
+[32m+[m[32m        or "tema" in texto[m
+[32m+[m[32m        or "sobre o que" in texto[m
+[32m+[m[32m        or "fala sobre" in texto[m
+[32m+[m[32m    ):[m
+[32m+[m[32m        tipos["assunto"] = True[m
+[32m+[m
+[32m+[m[32m    if ([m
+[32m+[m[32m        "objetivo" in texto[m
+[32m+[m[32m        or "finalidade" in texto[m
+[32m+[m[32m        or "objetivos" in texto[m
+[32m+[m[32m    ):[m
+[32m+[m[32m        tipos["objetivo"] = True[m
+[32m+[m
+[32m+[m[32m    if ([m
+[32m+[m[32m        "resuma" in texto[m
+[32m+[m[32m        or "resumo" in texto[m
+[32m+[m[32m        or "resumir" in texto[m
+[32m+[m[32m    ):[m
+[32m+[m[32m        tipos["resumo"] = True[m
+[32m+[m
+[32m+[m[32m    if ([m
+[32m+[m[32m        "primeiro paragrafo" in texto[m
+[32m+[m[32m        or "primeiro parágrafo" in pergunta.lower()[m
+[32m+[m[32m    ):[m
+[32m+[m[32m        tipos["primeiro_paragrafo"] = True[m
+[32m+[m
+[32m+[m[32m    return tipos[m
+[32m+[m
+[32m+[m
+[32m+[m[32m# =========================================================[m
+[32m+[m[32m# CRIAR TRECHOS[m
+[32m+[m[32m# =========================================================[m
+[32m+[m
+[32m+[m[32mdef criar_trechos(texto):[m
+ [m
+[31m-        texto_lower = texto.lower()[m
+[32m+[m[32m    trechos = [][m
+ [m
+[31m-        # Dividir o documento em blocos[m
+[31m-        tamanho = 1500[m
+[31m-        sobreposicao = 250[m
+[32m+[m[32m    if not texto:[m
+[32m+[m[32m        return trechos[m
+ [m
+[31m-        inicio = 0[m
+[32m+[m[32m    # Primeiro trecho:[m
+[32m+[m[32m    # extremamente importante para título,[m
+[32m+[m[32m    # introdução e objetivo.[m
+[32m+[m[32m    inicio_importante = texto[:3000][m
+ [m
+[31m-        while inicio < len(texto):[m
+[32m+[m[32m    trechos.append({[m
+[32m+[m[32m        "texto": inicio_importante,[m
+[32m+[m[32m        "tipo": "inicio",[m
+[32m+[m[32m        "pontos": 0[m
+[32m+[m[32m    })[m
+ [m
+[31m-            fim = min([m
+[31m-                inicio + tamanho,[m
+[31m-                len(texto)[m
+[31m-            )[m
+[32m+[m[32m    # Trechos menores para busca específica[m
+[32m+[m[32m    tamanho = 1200[m
+[32m+[m[32m    sobreposicao = 200[m
+ [m
+[31m-            trecho = texto[inicio:fim][m
+[31m-            trecho_lower = trecho.lower()[m
+[32m+[m[32m    inicio = 0[m
+ [m
+[31m-            pontos = 0[m
+[31m-            palavras_encontradas = 0[m
+[32m+[m[32m    while inicio < len(texto):[m
+ [m
+[31m-            for palavra in palavras:[m
+[32m+[m[32m        fim = min([m
+[32m+[m[32m            inicio + tamanho,[m
+[32m+[m[32m            len(texto)[m
+[32m+[m[32m        )[m
+ [m
+[31m-                quantidade = trecho_lower.count(palavra)[m
+[32m+[m[32m        trecho = texto[[m
+[32m+[m[32m            inicio:fim[m
+[32m+[m[32m        ][m
+ [m
+[31m-                if quantidade > 0:[m
+[32m+[m[32m        trechos.append({[m
+[32m+[m[32m            "texto": trecho,[m
+[32m+[m[32m            "tipo": "normal",[m
+[32m+[m[32m            "pontos": 0[m
+[32m+[m[32m        })[m
+ [m
+[31m-                    palavras_encontradas += 1[m
+[32m+[m[32m        if fim >= len(texto):[m
+[32m+[m[32m            break[m
+ [m
+[31m-                    pontos += min([m
+[31m-                        quantidade,[m
+[31m-                        3[m
+[31m-                    )[m
+[32m+[m[32m        inicio = fim - sobreposicao[m
+ [m
+[31m-            # Só aceitar trechos que realmente[m
+[31m-            # tenham alguma palavra da pergunta[m
+[31m-            if pontos > 0:[m
+[32m+[m[32m    return trechos[m
+ [m
+[31m-                trechos.append({[m
+[31m-                    "nome": nome,[m
+[31m-                    "texto": trecho,[m
+[31m-                    "pontos": pontos,[m
+[31m-                    "palavras": palavras_encontradas[m
+[31m-                })[m
+ [m
+[31m-            if fim >= len(texto):[m
+[31m-                break[m
+[32m+[m[32m# =========================================================[m
+[32m+[m[32m# BUSCA INTELIGENTE NO PDF[m
+[32m+[m[32m# =========================================================[m
+ [m
+[31m-            inicio = fim - sobreposicao[m
+[32m+[m[32mdef buscar_trechos_pdf([m
+[32m+[m[32m    pergunta,[m
+[32m+[m[32m    documentos[m
+[32m+[m[32m):[m
+ [m
+[31m-    # ==========================================[m
+[31m-    # ORDENAR RESULTADOS[m
+[31m-    # ==========================================[m
+[32m+[m[32m    tipo = identificar_tipo_pergunta([m
+[32m+[m[32m        pergunta[m
+[32m+[m[32m    )[m
+ [m
+[31m-    trechos.sort([m
+[31m-        key=lambda item: ([m
+[31m-            item["palavras"],[m
+[31m-            item["pontos"][m
+[31m-        ),[m
+[31m-        reverse=True[m
+[32m+[m[32m    documento_mencionado = ([m
+[32m+[m[32m        encontrar_documento_mencionado([m
+[32m+[m[32m            pergunta,[m
+[32m+[m[32m            documentos[m
+[32m+[m[32m        )[m
+     )[m
+ [m
+[31m-    # Máximo de 4 trechos[m
+[31m-    trechos = trechos[:4][m
+[32m+[m[32m    documentos_para_busca = [][m
+ [m
+[31m-    # ==========================================[m
+[31m-    # CONTEXTO DOS PDFs[m
+[31m-    # ==========================================[m
+[32m+[m[32m    if documento_mencionado:[m
+ [m
+[31m-    contexto_pdf = ""[m
+[32m+[m[32m        documentos_para_busca.append([m
+[32m+[m[32m            documento_mencionado[m
+[32m+[m[32m        )[m
+ [m
+[31m-    if trechos:[m
+[32m+[m[32m    else:[m
+ [m
+[31m-        contexto_pdf = ([m
+[31m-            "\n\n===== CONTEÚDO ENCONTRADO NOS PDFs =====\n"[m
+[31m-        )[m
+[32m+[m[32m        documentos_para_busca = documentos[m
+ [m
+[31m-        for trecho in trechos:[m
+ [m
+[31m-            contexto_pdf += ([m
+[31m-                "\nDOCUMENTO: "[m
+[31m-                + trecho["nome"][m
+[31m-                + "\n"[m
+[32m+[m[32m    palavras = palavras_importantes([m
+[32m+[m[32m        pergunta[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    trechos = [][m
+[32m+[m
+[32m+[m[32m    for documento in documentos_para_busca:[m
+[32m+[m
+[32m+[m[32m        nome = documento["nome"][m
+[32m+[m
+[32m+[m[32m        texto = documento["texto"] or ""[m
+[32m+[m
+[32m+[m[32m        if not texto.strip():[m
+[32m+[m[32m            continue[m
+[32m+[m
+[32m+[m[32m        partes = criar_trechos([m
+[32m+[m[32m            texto[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        for parte in partes:[m
+[32m+[m
+[32m+[m[32m            trecho = parte["texto"][m
+[32m+[m
+[32m+[m[32m            trecho_normalizado = normalizar_texto([m
+[32m+[m[32m                trecho[m
+[32m+[m[32m            )[m
+[32m+[m
+[32m+[m[32m            pontos = 0[m
+[32m+[m
+[32m+[m[32m            palavras_encontradas = 0[m
+[32m+[m
+[32m+[m
+[32m+[m[32m            # -----------------------------------------[m
+[32m+[m[32m            # BUSCA POR PALAVRAS[m
+[32m+[m[32m            # -----------------------------------------[m
+[32m+[m
+[32m+[m[32m            for palavra in palavras:[m
+[32m+[m
+[32m+[m[32m                quantidade = ([m
+[32m+[m[32m                    trecho_normalizado.count([m
+[32m+[m[32m                        palavra[m
+[32m+[m[32m                    )[m
+[32m+[m[32m                )[m
+[32m+[m
+[32m+[m[32m                if quantidade > 0:[m
+[32m+[m
+[32m+[m[32m                    palavras_encontradas += 1[m
+[32m+[m
+[32m+[m[32m                    pontos += min([m
+[32m+[m[32m                        quantidade * 2,[m
+[32m+[m[32m                        8[m
+[32m+[m[32m                    )[m
+[32m+[m
+[32m+[m
+[32m+[m[32m            # -----------------------------------------[m
+[32m+[m[32m            # BÔNUS PARA O INÍCIO DO PDF[m
+[32m+[m[32m            # -----------------------------------------[m
+[32m+[m
+[32m+[m[32m            if parte["tipo"] == "inicio":[m
+[32m+[m
+[32m+[m[32m                if ([m
+[32m+[m[32m                    tipo["assunto"][m
+[32m+[m[32m                    or tipo["titulo"][m
+[32m+[m[32m                    or tipo["objetivo"][m
+[32m+[m[32m                    or tipo["resumo"][m
+[32m+[m[32m                    or tipo["primeiro_paragrafo"][m
+[32m+[m[32m                ):[m
+[32m+[m
+[32m+[m[32m                    pontos += 30[m
+[32m+[m
+[32m+[m
+[32m+[m[32m            # -----------------------------------------[m
+[32m+[m[32m            # BÔNUS PARA DOCUMENTO MENCIONADO[m
+[32m+[m[32m            # -----------------------------------------[m
+[32m+[m
+[32m+[m[32m            if documento_mencionado:[m
+[32m+[m
+[32m+[m[32m                pontos += 50[m
+[32m+[m
+[32m+[m
+[32m+[m[32m            # -----------------------------------------[m
+[32m+[m[32m            # BÔNUS PARA PALAVRAS DE TÍTULO[m
+[32m+[m[32m            # -----------------------------------------[m
+[32m+[m
+[32m+[m[32m            primeiras_linhas = "\n".join([m
+[32m+[m[32m                trecho.splitlines()[:12][m
+             )[m
+ [m
+[31m-            contexto_pdf += ([m
+[31m-                trecho["texto"][m
+[31m-                + "\n"[m
+[32m+[m[32m            primeiras_linhas_normalizadas = ([m
+[32m+[m[32m                normalizar_texto([m
+[32m+[m[32m                    primeiras_linhas[m
+[32m+[m[32m                )[m
+             )[m
+ [m
+[31m-        contexto_pdf += ([m
+[31m-            "\n===== FIM DO CONTEÚDO DOS PDFs =====\n"[m
+[32m+[m[32m            if tipo["titulo"]:[m
+[32m+[m
+[32m+[m[32m                pontos += 20[m
+[32m+[m
+[32m+[m[32m            if tipo["assunto"]:[m
+[32m+[m
+[32m+[m[32m                palavras_assunto = [[m
+[32m+[m[32m                    "analise",[m
+[32m+[m[32m                    "analise e desenvolvimento",[m
+[32m+[m[32m                    "modelo",[m
+[32m+[m[32m                    "machine learning",[m
+[32m+[m[32m                    "previsao",[m
+[32m+[m[32m                    "precos",[m
+[32m+[m[32m                    "economicos",[m
+[32m+[m[32m                    "economica",[m
+[32m+[m[32m                    "pesquisa",[m
+[32m+[m[32m                    "estudo"[m
+[32m+[m[32m                ][m
+[32m+[m
+[32m+[m[32m                for palavra in palavras_assunto:[m
+[32m+[m
+[32m+[m[32m                    if palavra in primeiras_linhas_normalizadas:[m
+[32m+[m
+[32m+[m[32m                        pontos += 8[m
+[32m+[m
+[32m+[m
+[32m+[m[32m            # -----------------------------------------[m
+[32m+[m[32m            # ADICIONAR TRECHO[m
+[32m+[m[32m            # -----------------------------------------[m
+[32m+[m
+[32m+[m[32m            if pontos > 0:[m
+[32m+[m
+[32m+[m[32m                trechos.append({[m
+[32m+[m[32m                    "nome": nome,[m
+[32m+[m[32m                    "texto": trecho,[m
+[32m+[m[32m                    "pontos": pontos,[m
+[32m+[m[32m                    "palavras": palavras_encontradas,[m
+[32m+[m[32m                    "tipo": parte["tipo"][m
+[32m+[m[32m                })[m
+[32m+[m
+[32m+[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m[32m    # ORDENAR[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m
+[32m+[m[32m    trechos.sort([m
+[32m+[m[32m        key=lambda item: ([m
+[32m+[m[32m            item["pontos"],[m
+[32m+[m[32m            item["palavras"][m
+[32m+[m[32m        ),[m
+[32m+[m[32m        reverse=True[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m[32m    # EVITAR TRECHOS REPETIDOS[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m
+[32m+[m[32m    selecionados = [][m
+[32m+[m
+[32m+[m[32m    textos_usados = set()[m
+[32m+[m
+[32m+[m[32m    for trecho in trechos:[m
+[32m+[m
+[32m+[m[32m        chave = trecho["texto"][:150][m
+[32m+[m
+[32m+[m[32m        if chave in textos_usados:[m
+[32m+[m[32m            continue[m
+[32m+[m
+[32m+[m[32m        textos_usados.add([m
+[32m+[m[32m            chave[m
+         )[m
+ [m
+[31m-    # ==========================================[m
+[31m-    # INFORMAÇÃO SOBRE A AUSÊNCIA DE RESULTADOS[m
+[31m-    # ==========================================[m
+[32m+[m[32m        selecionados.append([m
+[32m+[m[32m            trecho[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        if len(selecionados) >= 3:[m
+[32m+[m[32m            break[m
+ [m
+[31m-    if not trechos:[m
+ [m
+[31m-        contexto_pdf = """[m
+[31m-NENHUM TRECHO RELEVANTE DOS PDFs FOI ENCONTRADO.[m
+[32m+[m[32m    return selecionados[m
+ [m
+[31m-Se a pergunta for sobre os PDFs,[m
+[31m-você deve informar que não encontrou[m
+[31m-a informação nos documentos.[m
+ [m
+[31m-Não invente informações que não estão[m
+[31m-nos trechos dos PDFs.[m
+[32m+[m[32m# =========================================================[m
+[32m+[m[32m# MONTAR CONTEXTO DO PDF[m
+[32m+[m[32m# =========================================================[m
+[32m+[m
+[32m+[m[32mdef montar_contexto_pdf(trechos):[m
+[32m+[m
+[32m+[m[32m    if not trechos:[m
+[32m+[m
+[32m+[m[32m        return """[m
+[32m+[m[32mNENHUM TRECHO RELEVANTE FOI ENCONTRADO.[m
+[32m+[m
+[32m+[m[32mNão invente informações.[m
+ """[m
+ [m
+[31m-    # ==========================================[m
+[32m+[m
+[32m+[m[32m    contexto = ([m
+[32m+[m[32m        "\n===== INFORMAÇÕES EXTRAÍDAS DO PDF =====\n"[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    for numero, trecho in enumerate([m
+[32m+[m[32m        trechos,[m
+[32m+[m[32m        start=1[m
+[32m+[m[32m    ):[m
+[32m+[m
+[32m+[m[32m        contexto += ([m
+[32m+[m[32m            "\nTRECHO "[m
+[32m+[m[32m            + str(numero)[m
+[32m+[m[32m            + " | DOCUMENTO: "[m
+[32m+[m[32m            + trecho["nome"][m
+[32m+[m[32m            + "\n"[m
+[32m+[m[32m            + trecho["texto"][m
+[32m+[m[32m            + "\n"[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m    contexto += ([m
+[32m+[m[32m        "\n===== FIM DAS INFORMAÇÕES =====\n"[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    return contexto[m
+[32m+[m
+[32m+[m
+[32m+[m[32m# =========================================================[m
+[32m+[m[32m# PERGUNTAR[m
+[32m+[m[32m# =========================================================[m
+[32m+[m
+[32m+[m[32m@app.route([m
+[32m+[m[32m    "/perguntar",[m
+[32m+[m[32m    methods=["POST"][m
+[32m+[m[32m)[m
+[32m+[m[32m@login_obrigatorio[m
+[32m+[m[32mdef perguntar():[m
+[32m+[m
+[32m+[m[32m    dados = request.get_json() or {}[m
+[32m+[m
+[32m+[m[32m    pergunta = dados.get([m
+[32m+[m[32m        "pergunta",[m
+[32m+[m[32m        ""[m
+[32m+[m[32m    ).strip()[m
+[32m+[m
+[32m+[m[32m    if not pergunta:[m
+[32m+[m
+[32m+[m[32m        return jsonify({[m
+[32m+[m[32m            "erro": "Digite uma pergunta."[m
+[32m+[m[32m        }), 400[m
+[32m+[m
+[32m+[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m[32m    # IDENTIFICAR TIPO DA PERGUNTA[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m
+[32m+[m[32m    tipo = identificar_tipo_pergunta([m
+[32m+[m[32m        pergunta[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    pergunta_sobre_pdf = ([m
+[32m+[m[32m        tipo["titulo"][m
+[32m+[m[32m        or tipo["assunto"][m
+[32m+[m[32m        or tipo["objetivo"][m
+[32m+[m[32m        or tipo["resumo"][m
+[32m+[m[32m        or tipo["primeiro_paragrafo"][m
+[32m+[m[32m        or "pdf" in normalizar_texto(pergunta)[m
+[32m+[m[32m        or "documento" in normalizar_texto(pergunta)[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m[32m    # CONVERSA[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m
+[32m+[m[32m    conversa_id = session.get([m
+[32m+[m[32m        "conversa_id"[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    if not conversa_id:[m
+[32m+[m
+[32m+[m[32m        conexao = conectar()[m
+[32m+[m
+[32m+[m[32m        cursor = conexao.execute([m
+[32m+[m[32m            """[m
+[32m+[m[32m            INSERT INTO conversas[m
+[32m+[m[32m            (usuario_id, titulo, criada_em)[m
+[32m+[m[32m            VALUES (?, ?, ?)[m
+[32m+[m[32m            """,[m
+[32m+[m[32m            ([m
+[32m+[m[32m                session["usuario_id"],[m
+[32m+[m[32m                pergunta[:40],[m
+[32m+[m[32m                datetime.now().isoformat()[m
+[32m+[m[32m            )[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        conexao.commit()[m
+[32m+[m
+[32m+[m[32m        conversa_id = cursor.lastrowid[m
+[32m+[m
+[32m+[m[32m        conexao.close()[m
+[32m+[m
+[32m+[m[32m        session["conversa_id"] = conversa_id[m
+[32m+[m
+[32m+[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m[32m    # PEGAR DOCUMENTOS[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m
+[32m+[m[32m    conexao = conectar()[m
+[32m+[m
+[32m+[m[32m    documentos = conexao.execute([m
+[32m+[m[32m        """[m
+[32m+[m[32m        SELECT nome, texto[m
+[32m+[m[32m        FROM documentos[m
+[32m+[m[32m        WHERE usuario_id = ?[m
+[32m+[m[32m        """,[m
+[32m+[m[32m        (session["usuario_id"],)[m
+[32m+[m[32m    ).fetchall()[m
+[32m+[m
+[32m+[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m[32m    # HISTÓRICO[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m
+[32m+[m[32m    historico = [][m
+[32m+[m
+[32m+[m[32m    # Para perguntas sobre PDF, NÃO usamos o histórico.[m
+[32m+[m[32m    # Isso impede uma resposta errada anterior[m
+[32m+[m[32m    # de contaminar a resposta atual.[m
+[32m+[m
+[32m+[m[32m    if not pergunta_sobre_pdf:[m
+[32m+[m
+[32m+[m[32m        historico = conexao.execute([m
+[32m+[m[32m            """[m
+[32m+[m[32m            SELECT papel, conteudo[m
+[32m+[m[32m            FROM mensagens[m
+[32m+[m[32m            WHERE conversa_id = ?[m
+[32m+[m[32m            ORDER BY id DESC[m
+[32m+[m[32m            LIMIT 4[m
+[32m+[m[32m            """,[m
+[32m+[m[32m            (conversa_id,)[m
+[32m+[m[32m        ).fetchall()[m
+[32m+[m
+[32m+[m[32m        historico = list([m
+[32m+[m[32m            reversed(historico)[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m
+[32m+[m[32m    conexao.close()[m
+[32m+[m
+[32m+[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m[32m    # BUSCAR PDF[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m
+[32m+[m[32m    trechos = buscar_trechos_pdf([m
+[32m+[m[32m        pergunta,[m
+[32m+[m[32m        documentos[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m[32m    # CONTEXTO PDF[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m
+[32m+[m[32m    contexto_pdf = montar_contexto_pdf([m
+[32m+[m[32m        trechos[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m
+[32m+[m[32m    # =====================================================[m
+     # MEMÓRIA[m
+[31m-    # ==========================================[m
+[32m+[m[32m    # =====================================================[m
+ [m
+     memoria_usuario = pegar_memoria()[m
+ [m
+     contexto_memoria = ""[m
+ [m
+[31m-    if memoria_usuario:[m
+[32m+[m[32m    if memoria_usuario and not pergunta_sobre_pdf:[m
+ [m
+         contexto_memoria = ([m
+             "\n\nMEMÓRIA DO USUÁRIO:\n"[m
+[36m@@ -695,67 +1216,165 @@[m [mnos trechos dos PDFs.[m
+             )[m
+         )[m
+ [m
+[31m-    # ==========================================[m
+[31m-    # SISTEMA DA IA[m
+[31m-    # ==========================================[m
+ [m
+[31m-    sistema = """[m
+[31m-Você é uma inteligência artificial brasileira[m
+[31m-amigável, educativa e precisa.[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m[32m    # INSTRUÇÕES ESPECÍFICAS[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m
+[32m+[m[32m    if tipo["titulo"]:[m
+[32m+[m
+[32m+[m[32m        instrucao = """[m
+[32m+[m[32mO usuário quer saber o TÍTULO do documento.[m
+[32m+[m
+[32m+[m[32mUse somente o texto fornecido.[m
+[32m+[m
+[32m+[m[32mProcure o título nas primeiras linhas.[m
+[32m+[m
+[32m+[m[32mResponda somente com o título encontrado,[m
+[32m+[m[32msem inventar outro.[m
+[32m+[m[32m"""[m
+[32m+[m
+[32m+[m
+[32m+[m[32m    elif tipo["assunto"]:[m
+[32m+[m
+[32m+[m[32m        instrucao = """[m
+[32m+[m[32mO usuário quer saber o ASSUNTO PRINCIPAL do documento.[m
+[32m+[m
+[32m+[m[32mUse principalmente o início do documento,[m
+[32m+[m[32mincluindo título, introdução e objetivo.[m
+[32m+[m
+[32m+[m[32mIdentifique o tema central.[m
+[32m+[m
+[32m+[m[32mNão invente temas.[m
+[32m+[m
+[32m+[m[32mNão use conhecimento externo.[m
+[32m+[m
+[32m+[m[32mResponda em no máximo 2 frases.[m
+[32m+[m
+[32m+[m[32mSe o título deixar o assunto evidente,[m
+[32m+[m[32muse-o como base da resposta.[m
+[32m+[m[32m"""[m
+[32m+[m
+[32m+[m
+[32m+[m[32m    elif tipo["objetivo"]:[m
+[32m+[m
+[32m+[m[32m        instrucao = """[m
+[32m+[m[32mO usuário quer saber o OBJETIVO do documento.[m
+[32m+[m
+[32m+[m[32mProcure no início do documento e nos trechos[m
+[32m+[m[32mfornecidos expressões como objetivo, finalidade,[m
+[32m+[m[32mpropósito, analisar, desenvolver, estudar ou investigar.[m
+[32m+[m
+[32m+[m[32mResponda somente com informações presentes[m
+[32m+[m[32mno documento.[m
+[32m+[m
+[32m+[m[32mNão invente.[m
+[32m+[m[32m"""[m
+[32m+[m
+[32m+[m
+[32m+[m[32m    elif tipo["primeiro_paragrafo"]:[m
+[32m+[m
+[32m+[m[32m        instrucao = """[m
+[32m+[m[32mO usuário quer o PRIMEIRO PARÁGRAFO do documento.[m
+ [m
+[31m-Responda em português do Brasil.[m
+[32m+[m[32mUse o começo do documento.[m
+[32m+[m
+[32m+[m[32mResuma ou reproduza apenas o conteúdo[m
+[32m+[m[32mpresente no primeiro parágrafo.[m
+[32m+[m
+[32m+[m[32mNão invente.[m
+[32m+[m[32m"""[m
+ [m
+[31m-REGRAS ABSOLUTAS:[m
+ [m
+[31m-1. Quando a pergunta estiver relacionada aos PDFs,[m
+[31m-   use SOMENTE as informações presentes no conteúdo[m
+[31m-   dos PDFs fornecido abaixo.[m
+[32m+[m[32m    elif tipo["resumo"]:[m
+[32m+[m
+[32m+[m[32m        instrucao = """[m
+[32m+[m[32mO usuário quer um RESUMO do documento.[m
+[32m+[m
+[32m+[m[32mUse somente os trechos encontrados.[m
+[32m+[m
+[32m+[m[32mFaça um resumo curto e objetivo.[m
+[32m+[m
+[32m+[m[32mNão invente informações que não aparecem[m
+[32m+[m[32mno documento.[m
+[32m+[m[32m"""[m
+ [m
+[31m-2. NÃO invente informações.[m
+ [m
+[31m-3. NÃO complete informações ausentes usando[m
+[31m-   conhecimento próprio.[m
+[32m+[m[32m    elif pergunta_sobre_pdf:[m
+ [m
+[31m-4. Se a informação não estiver nos trechos fornecidos,[m
+[31m-   diga claramente:[m
+[32m+[m[32m        instrucao = """[m
+[32m+[m[32mA pergunta é sobre um PDF.[m
+[32m+[m
+[32m+[m[32mUse somente as informações extraídas[m
+[32m+[m[32mdo PDF fornecidas abaixo.[m
+[32m+[m
+[32m+[m[32mNão use conhecimento externo para completar[m
+[32m+[m[32mlacunas.[m
+[32m+[m
+[32m+[m[32mSe a informação não estiver disponível,[m
+[32m+[m[32mdiga:[m
+ [m
+ "Não encontrei essa informação nos PDFs disponíveis."[m
+ [m
+[31m-5. Nunca diga que uma informação veio de um PDF[m
+[31m-   se ela não estiver no conteúdo fornecido.[m
+[32m+[m[32mNão invente nomes, números, datas ou fatos.[m
+[32m+[m[32m"""[m
+[32m+[m
+ [m
+[31m-6. Se o usuário pedir uma frase do PDF,[m
+[31m-   copie somente uma frase que realmente esteja[m
+[31m-   no conteúdo fornecido.[m
+[32m+[m[32m    else:[m
+ [m
+[31m-7. Se o usuário pedir um resumo,[m
+[31m-   resuma somente o conteúdo encontrado.[m
+[32m+[m[32m        instrucao = """[m
+[32m+[m[32mResponda normalmente em português do Brasil.[m
+ [m
+[31m-8. Se a pergunta NÃO estiver relacionada aos PDFs,[m
+[31m-   você pode responder normalmente usando seu[m
+[31m-   conhecimento.[m
+[32m+[m[32mUse o histórico da conversa quando necessário.[m
+ [m
+[31m-9. Não invente nomes, matérias, programas,[m
+[31m-   capítulos, questões, páginas ou informações[m
+[31m-   que não estejam no contexto.[m
+[32m+[m[32mSeja objetivo e claro.[m
+ [m
+[31m-10. Seja claro e direto.[m
+[32m+[m[32mNão invente informações.[m
+ """[m
+ [m
+[32m+[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m[32m    # SISTEMA[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m
+[32m+[m[32m    sistema = f"""[m
+[32m+[m[32mVocê é uma inteligência artificial brasileira,[m
+[32m+[m[32meducativa, precisa e objetiva.[m
+[32m+[m
+[32m+[m[32m{instrucao}[m
+[32m+[m
+[32m+[m[32mIMPORTANTE:[m
+[32m+[m
+[32m+[m[32mAs informações entre as marcações[m
+[32m+[m[32m"INFORMAÇÕES EXTRAÍDAS DO PDF"[m
+[32m+[m[32msão a fonte principal para perguntas sobre PDFs.[m
+[32m+[m
+[32m+[m[32m===== INFORMAÇÕES EXTRAÍDAS DO PDF =====[m
+[32m+[m
+[32m+[m[32m{contexto_pdf}[m
+[32m+[m
+[32m+[m[32m===== FIM DAS INFORMAÇÕES =====[m
+[32m+[m[32m"""[m
+[32m+[m
+[32m+[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m[32m    # MENSAGENS PARA A IA[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m
+     mensagens = [[m
+         {[m
+             "role": "system",[m
+             "content": ([m
+                 sistema[m
+                 + contexto_memoria[m
+[31m-                + contexto_pdf[m
+             )[m
+         }[m
+     ][m
+ [m
+[31m-    # ==========================================[m
+[32m+[m
+[32m+[m[32m    # =====================================================[m
+     # HISTÓRICO[m
+[31m-    # ==========================================[m
+[32m+[m[32m    # =====================================================[m
+ [m
+     for mensagem in historico:[m
+ [m
+[36m@@ -764,40 +1383,104 @@[m [mREGRAS ABSOLUTAS:[m
+             "content": mensagem["conteudo"][m
+         })[m
+ [m
+[31m-    # ==========================================[m
+[32m+[m
+[32m+[m[32m    # =====================================================[m
+     # PERGUNTA[m
+[31m-    # ==========================================[m
+[32m+[m[32m    # =====================================================[m
+ [m
+     mensagens.append({[m
+         "role": "user",[m
+         "content": pergunta[m
+     })[m
+[31m-    print("\n==============================")[m
+[31m-print("PERGUNTA:")[m
+[31m-print(pergunta)[m
+ [m
+[31m-    # ==========================================[m
+[31m-    # IA[m
+[31m-    # ==========================================[m
+[31m-    [m
+[31m-    print("\n==============================")[m
+[31m-print("PERGUNTA:")[m
+[31m-print(pergunta)[m
+ [m
+[31m-print("\nTRECHOS ENCONTRADOS:")[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m[32m    # DEBUG[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m
+[32m+[m[32m    print([m
+[32m+[m[32m        "\n=============================="[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    print([m
+[32m+[m[32m        "PERGUNTA:"[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    print([m
+[32m+[m[32m        pergunta[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    print([m
+[32m+[m[32m        "\nTIPOS:"[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    print([m
+[32m+[m[32m        tipo[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    print([m
+[32m+[m[32m        "\nPDF MENCIONADO:"[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    documento_mencionado = ([m
+[32m+[m[32m        encontrar_documento_mencionado([m
+[32m+[m[32m            pergunta,[m
+[32m+[m[32m            documentos[m
+[32m+[m[32m        )[m
+[32m+[m[32m    )[m
+ [m
+[31m-for trecho in trechos:[m
+[31m-    print("\n---", trecho["nome"], "---")[m
+[31m-    print("Pontos:", trecho["pontos"])[m
+[31m-    print(trecho["texto"][:1000])[m
+[32m+[m[32m    if documento_mencionado:[m
+ [m
+[31m-print("==============================\n")[m
+[31m-   [m
+[31m- try:[m
+[32m+[m[32m        print([m
+[32m+[m[32m            documento_mencionado["nome"][m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m    else:[m
+[32m+[m
+[32m+[m[32m        print([m
+[32m+[m[32m            "Nenhum documento específico"[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m    print([m
+[32m+[m[32m        "\nTRECHOS ENCONTRADOS:"[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    for trecho in trechos:[m
+[32m+[m
+[32m+[m[32m        print([m
+[32m+[m[32m            "\n---",[m
+[32m+[m[32m            trecho["nome"],[m
+[32m+[m[32m            "---"[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        print([m
+[32m+[m[32m            "Pontos:",[m
+[32m+[m[32m            trecho["pontos"][m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        print([m
+[32m+[m[32m            "Tipo:",[m
+[32m+[m[32m            trecho["tipo"][m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        print([m
+[32m+[m[32m            trecho["texto"][:700][m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m    print([m
+[32m+[m[32m        "==============================\n"[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m[32m    # GERAR RESPOSTA[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m
+[32m+[m[32m    try:[m
+ [m
+         resultado = ia([m
+             mensagens,[m
+[31m-            max_new_tokens=400,[m
+[32m+[m[32m            max_new_tokens=140,[m
+             do_sample=False[m
+         )[m
+ [m
+[36m@@ -806,19 +1489,23 @@[m [mprint("==============================\n")[m
+             ["generated_text"][m
+             [-1][m
+             ["content"][m
+[31m-        )[m
+[32m+[m[32m        ).strip()[m
+ [m
+     except Exception as erro:[m
+ [m
+[31m-        print("ERRO NA IA:", erro)[m
+[32m+[m[32m        print([m
+[32m+[m[32m            "ERRO NA IA:",[m
+[32m+[m[32m            erro[m
+[32m+[m[32m        )[m
+ [m
+         return jsonify({[m
+             "erro": "Erro ao gerar resposta."[m
+         }), 500[m
+ [m
+[31m-    # ==========================================[m
+[32m+[m
+[32m+[m[32m    # =====================================================[m
+     # SALVAR MENSAGENS[m
+[31m-    # ==========================================[m
+[32m+[m[32m    # =====================================================[m
+ [m
+     conexao = conectar()[m
+ [m
+[36m@@ -851,21 +1538,33 @@[m [mprint("==============================\n")[m
+     )[m
+ [m
+     conexao.commit()[m
+[32m+[m
+     conexao.close()[m
+ [m
+[32m+[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m[32m    # RETORNO[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m
+     return jsonify({[m
+         "resposta": resposta[m
+     })[m
+ [m
+[31m-# ==========================================[m
+[32m+[m
+[32m+[m[32m# =========================================================[m
+ # UPLOAD DE PDF[m
+[31m-# ==========================================[m
+[32m+[m[32m# =========================================================[m
+ [m
+[31m-@app.route("/upload", methods=["POST"])[m
+[32m+[m[32m@app.route([m
+[32m+[m[32m    "/upload",[m
+[32m+[m[32m    methods=["POST"][m
+[32m+[m[32m)[m
+ @login_obrigatorio[m
+ def upload():[m
+ [m
+[31m-    arquivo = request.files.get("arquivo")[m
+[32m+[m[32m    arquivo = request.files.get([m
+[32m+[m[32m        "arquivo"[m
+[32m+[m[32m    )[m
+ [m
+     if not arquivo:[m
+ [m
+[36m@@ -873,39 +1572,87 @@[m [mdef upload():[m
+             "erro": "Nenhum arquivo enviado."[m
+         }), 400[m
+ [m
+[31m-    nome = secure_filename(arquivo.filename)[m
+ [m
+[31m-    if not nome.lower().endswith(".pdf"):[m
+[32m+[m[32m    nome = secure_filename([m
+[32m+[m[32m        arquivo.filename[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    if not nome.lower().endswith([m
+[32m+[m[32m        ".pdf"[m
+[32m+[m[32m    ):[m
+ [m
+         return jsonify({[m
+             "erro": "Por enquanto, envie apenas arquivos PDF."[m
+         }), 400[m
+ [m
+[31m-    nome_unico = str(uuid.uuid4()) + "_" + nome[m
+[32m+[m
+[32m+[m[32m    nome_unico = ([m
+[32m+[m[32m        str(uuid.uuid4())[m
+[32m+[m[32m        + "_"[m
+[32m+[m[32m        + nome[m
+[32m+[m[32m    )[m
+ [m
+     caminho = os.path.join([m
+         app.config["UPLOAD_FOLDER"],[m
+         nome_unico[m
+     )[m
+ [m
+[31m-    arquivo.save(caminho)[m
+[32m+[m[32m    arquivo.save([m
+[32m+[m[32m        caminho[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m[32m    # LER PDF[m
+[32m+[m[32m    # =====================================================[m
+ [m
+     try:[m
+ [m
+[31m-        leitor = PdfReader(caminho)[m
+[32m+[m[32m        leitor = PdfReader([m
+[32m+[m[32m            caminho[m
+[32m+[m[32m        )[m
+ [m
+         texto = ""[m
+ [m
+         for pagina in leitor.pages:[m
+ [m
+[31m-            texto += pagina.extract_text() or ""[m
+[32m+[m[32m            texto += ([m
+[32m+[m[32m                pagina.extract_text()[m
+[32m+[m[32m                or ""[m
+[32m+[m[32m            )[m
+[32m+[m
+[32m+[m[32m            texto += "\n"[m
+[32m+[m
+ [m
+     except Exception as erro:[m
+ [m
+         return jsonify({[m
+[31m-            "erro": f"Não foi possível ler o PDF: {erro}"[m
+[32m+[m[32m            "erro": ([m
+[32m+[m[32m                "Não foi possível ler o PDF: "[m
+[32m+[m[32m                + str(erro)[m
+[32m+[m[32m            )[m
+         }), 500[m
+ [m
+[32m+[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m[32m    # VERIFICAR SE O PDF TEM TEXTO[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m
+[32m+[m[32m    if not texto.strip():[m
+[32m+[m
+[32m+[m[32m        return jsonify({[m
+[32m+[m[32m            "erro": ([m
+[32m+[m[32m                "Não foi possível encontrar texto "[m
+[32m+[m[32m                "nesse PDF. Ele pode ser um PDF "[m
+[32m+[m[32m                "formado apenas por imagens."[m
+[32m+[m[32m            )[m
+[32m+[m[32m        }), 400[m
+[32m+[m
+[32m+[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m[32m    # SALVAR DOCUMENTO[m
+[32m+[m[32m    # =====================================================[m
+[32m+[m
+     conexao = conectar()[m
+ [m
+     conexao.execute([m
+[36m@@ -924,39 +1671,62 @@[m [mdef upload():[m
+     )[m
+ [m
+     conexao.commit()[m
+[32m+[m
+     conexao.close()[m
+ [m
+[32m+[m
+[32m+[m[32m    print([m
+[32m+[m[32m        "\nPDF ENVIADO:"[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    print([m
+[32m+[m[32m        nome[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    print([m
+[32m+[m[32m        "Caracteres extraídos:",[m
+[32m+[m[32m        len(texto)[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m
+     return jsonify({[m
+         "sucesso": True,[m
+[31m-        "mensagem": f"PDF '{nome}' enviado e lido com sucesso."[m
+[32m+[m[32m        "mensagem": ([m
+[32m+[m[32m            f"PDF '{nome}' enviado e lido com sucesso."[m
+[32m+[m[32m        )[m
+     })[m
+ [m
+ [m
+[31m-# ==========================================[m
+[31m-# PESQUISA NOS DOCUMENTOS[m
+[31m-# ==========================================[m
+[32m+[m[32m# =========================================================[m
+[32m+[m[32m# PESQUISAR DOCUMENTOS[m
+[32m+[m[32m# =========================================================[m
+ [m
+[31m-@app.route("/pesquisar_documentos", methods=["POST"])[m
+[32m+[m[32m@app.route([m
+[32m+[m[32m    "/pesquisar_documentos",[m
+[32m+[m[32m    methods=["POST"][m
+[32m+[m[32m)[m
+ @login_obrigatorio[m
+ def pesquisar_documentos():[m
+ [m
+[31m-    dados = request.get_json()[m
+[32m+[m[32m    dados = request.get_json() or {}[m
+ [m
+[31m-    pergunta = dados.get("pergunta", "").strip()[m
+[32m+[m[32m    pesquisa = dados.get([m
+[32m+[m[32m        "pesquisa",[m
+[32m+[m[32m        ""[m
+[32m+[m[32m    ).strip().lower()[m
+ [m
+[31m-    if not pergunta:[m
+[32m+[m[32m    if not pesquisa:[m
+ [m
+         return jsonify({[m
+[31m-            "erro": "Digite algo para pesquisar."[m
+[31m-        }), 400[m
+[32m+[m[32m            "resultados": [][m
+[32m+[m[32m        })[m
+ [m
+[31m-    palavras = pergunta.lower().split()[m
+ [m
+     conexao = conectar()[m
+ [m
+     documentos = conexao.execute([m
+         """[m
+[31m-        SELECT nome, texto[m
+[32m+[m[32m        SELECT id, nome, texto[m
+         FROM documentos[m
+         WHERE usuario_id = ?[m
+         """,[m
+[36m@@ -965,55 +1735,41 @@[m [mdef pesquisar_documentos():[m
+ [m
+     conexao.close()[m
+ [m
+[32m+[m
+     resultados = [][m
+ [m
+[32m+[m[32m    pesquisa_normalizada = normalizar_texto([m
+[32m+[m[32m        pesquisa[m
+[32m+[m[32m    )[m
+[32m+[m
+     for documento in documentos:[m
+ [m
+         texto = documento["texto"] or ""[m
+[31m-        texto_lower = texto.lower()[m
+ [m
+[31m-        pontos = sum([m
+[31m-            1[m
+[31m-            for palavra in palavras[m
+[31m-            if len(palavra) > 2 and palavra in texto_lower[m
+[32m+[m[32m        texto_normalizado = normalizar_texto([m
+[32m+[m[32m            texto[m
+         )[m
+ [m
+[31m-        if pontos > 0:[m
+[31m-[m
+[31m-            posicao = texto_lower.find(palavras[0])[m
+[31m-[m
+[31m-            if posicao < 0:[m
+[31m-                posicao = 0[m
+[31m-[m
+[31m-            inicio = max(0, posicao - 300)[m
+[31m-            fim = min(len(texto), posicao + 1000)[m
+[31m-[m
+[31m-            trecho = texto[inicio:fim][m
+[32m+[m[32m        if pesquisa_normalizada in texto_normalizado:[m
+ [m
+             resultados.append({[m
+[31m-                "nome": documento["nome"],[m
+[31m-                "trecho": trecho,[m
+[31m-                "pontos": pontos[m
+[32m+[m[32m                "id": documento["id"],[m
+[32m+[m[32m                "nome": documento["nome"][m
+             })[m
+ [m
+[31m-    resultados.sort([m
+[31m-        key=lambda x: x["pontos"],[m
+[31m-        reverse=True[m
+[31m-    )[m
+ [m
+     return jsonify({[m
+[31m-        "resultados": resultados[:5][m
+[32m+[m[32m        "resultados": resultados[m
+     })[m
+ [m
+ [m
+[31m-# ==========================================[m
+[31m-# EXECUTAR[m
+[31m-# ==========================================[m
+[32m+[m[32m# =========================================================[m
+[32m+[m[32m# INICIAR SERVIDOR[m
+[32m+[m[32m# =========================================================[m
+ [m
+ if __name__ == "__main__":[m
+[31m-[m
+     app.run([m
+[31m-        debug=False,[m
+[31m-        host="127.0.0.1",[m
+[31m-        port=5000[m
+[32m+[m[32m        host="0.0.0.0",[m
+[32m+[m[32m        port=int(os.environ.get("PORT", 5000)),[m
+[32m+[m[32m        debug=True[m
+     )[m
+\ No newline at end of file[m

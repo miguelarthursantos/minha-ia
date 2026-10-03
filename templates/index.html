@@ -2,25 +2,46 @@
 <html lang="pt-BR">
 
 <head>
+
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <title>Minha IA 🤖</title>
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
 
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <meta
+        name="theme-color"
+        content="#111827"
+    >
+
+    <title>Projeto MASR 🤖</title>
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', filename='style.css') }}"
+    >
+
 </head>
 
 <body>
 
-    <!-- ========================= -->
-    <!-- TELA DE LOGIN -->
-    <!-- ========================= -->
+    <!-- =====================================================
+         TELA DE LOGIN
+         ===================================================== -->
 
-    <div id="loginTela" class="login-container">
+    <div
+        id="loginTela"
+        class="login-container"
+    >
 
         <div class="login-box">
 
-            <h1>🤖 Minha IA</h1>
+            <div class="login-logo">
+                🤖
+            </div>
+
+            <h1>Projeto MASR</h1>
 
             <p>Entre na sua conta</p>
 
@@ -30,6 +51,7 @@
                     id="loginUsuario"
                     type="text"
                     placeholder="Usuário"
+                    autocomplete="username"
                     required
                 >
 
@@ -37,6 +59,7 @@
                     id="loginSenha"
                     type="password"
                     placeholder="Senha"
+                    autocomplete="current-password"
                     required
                 >
 
@@ -46,9 +69,9 @@
 
             </form>
 
-
-            <hr>
-
+            <div class="login-separador">
+                <span>ou</span>
+            </div>
 
             <h2>Criar conta</h2>
 
@@ -58,6 +81,7 @@
                     id="cadastroUsuario"
                     type="text"
                     placeholder="Novo usuário"
+                    autocomplete="username"
                     required
                 >
 
@@ -65,10 +89,14 @@
                     id="cadastroSenha"
                     type="password"
                     placeholder="Nova senha"
+                    autocomplete="new-password"
                     required
                 >
 
-                <button type="submit">
+                <button
+                    type="submit"
+                    class="botao-secundario"
+                >
                     Criar conta
                 </button>
 
@@ -79,94 +107,1121 @@
     </div>
 
 
-    <!-- ========================= -->
-    <!-- APLICATIVO -->
-    <!-- ========================= -->
+    <!-- =====================================================
+         APLICATIVO
+         ===================================================== -->
 
-    <div id="appTela" class="app-container" style="display: none;">
+    <div
+        id="appTela"
+        class="app-container"
+        style="display: none;"
+    >
 
-        <!-- MENU LATERAL -->
+        <!-- =================================================
+             MENU LATERAL
+             ================================================= -->
 
         <aside class="sidebar">
 
-            <h2>🤖 Minha IA</h2>
+            <div class="sidebar-top">
 
-            <button id="btnNovaConversa">
-                ➕ Nova conversa
-            </button>
+                <!-- LOGO -->
 
-            <button id="btnTema">
-                🌙 Tema
-            </button>
+                <div class="logo-area">
 
-            <label class="upload-button">
+                    <div class="logo-icon">
+                        🤖
+                    </div>
 
-                📄 Enviar PDF
+                    <div>
 
-                <input
-                    id="uploadPdf"
-                    type="file"
-                    accept=".pdf"
-                    hidden
+                        <strong>
+                            Projeto MASR
+                        </strong>
+
+                        <span>
+                            Assistente pessoal
+                        </span>
+
+                    </div>
+
+                </div>
+
+
+                <!-- NOVA CONVERSA -->
+
+                <button
+                    id="btnNovaConversa"
+                    class="btn-nova-conversa"
+                    title="Nova conversa"
+                    type="button"
                 >
 
-            </label>
+                    <span>＋</span>
+
+                    Nova conversa
+
+                </button>
 
 
-            <h3>Conversas</h3>
+                <!-- PESQUISA -->
 
-            <div id="listaConversas"></div>
+                <div class="pesquisa-conversas">
+
+                    <span class="icone-pesquisa">
+                        🔎
+                    </span>
+
+                    <input
+                        id="pesquisaConversas"
+                        type="text"
+                        placeholder="Pesquisar conversas..."
+                        autocomplete="off"
+                    >
+
+                </div>
 
 
-            <button id="btnLogout">
-                🚪 Sair
-            </button>
+                <!-- AÇÕES -->
+
+                <div class="acoes-sidebar">
+
+                    <button
+                        id="btnTema"
+                        class="acao-sidebar"
+                        title="Alterar tema"
+                        type="button"
+                    >
+
+                        <span id="iconeTema">
+                            🌙
+                        </span>
+
+                        Tema
+
+                    </button>
+
+
+                    <label
+                        class="acao-sidebar upload-button"
+                        title="Enviar PDF"
+                    >
+
+                        <span>📄</span>
+
+                        Enviar PDF
+
+                        <input
+                            id="uploadPdf"
+                            type="file"
+                            accept=".pdf"
+                            hidden
+                        >
+
+                    </label>
+
+<button
+    id="btnCriadorSites"
+    class="acao-sidebar"
+    title="Criador de Sites"
+    type="button"
+>
+
+    <span>🌐</span>
+
+    Criador de Sites
+
+</button>
+
+                </div>
+
+
+                <!-- CONFIGURAÇÕES -->
+
+                <button
+                    id="btnConfiguracoes"
+                    class="botao-configuracoes"
+                    title="Abrir configurações"
+                    type="button"
+                >
+
+                    <span>⚙️</span>
+
+                    Configurações
+
+                </button>
+
+
+                <!-- =================================================
+                     PROJETOS
+                     ================================================= -->
+
+                <div class="projetos-sidebar">
+
+                    <!-- TODAS AS CONVERSAS -->
+
+                    <button
+                        id="btnTodasConversas"
+                        class="btn-todas-conversas"
+                        type="button"
+                    >
+
+                        💬 Todas as conversas
+
+                    </button>
+
+
+                    <!-- TÍTULO DOS PROJETOS -->
+
+                    <div class="titulo-projetos">
+
+                        <span>
+                            📁 Meus projetos
+                        </span>
+
+                        <button
+                            id="btnNovoProjeto"
+                            class="btn-novo-projeto"
+                            type="button"
+                            title="Novo projeto"
+                        >
+                            ＋
+                        </button>
+
+                    </div>
+
+
+                    <!-- LISTA DE PROJETOS -->
+
+                    <div
+    id="listaProjetos"
+    class="lista-projetos"
+></div>
+
+<!-- =================================================
+     ARQUIVOS DO PROJETO
+     ================================================= -->
+
+<div class="arquivos-projeto-sidebar">
+
+    <div class="titulo-arquivos-projeto">
+
+        <span>
+            📄 Arquivos
+        </span>
+
+    </div>
+
+    <div
+        id="listaDocumentos"
+        class="lista-documentos"
+    ></div>
+
+</div>
+
+                </div>
+
+            </div>
+
+
+            <!-- =================================================
+                 CONVERSAS
+                 ================================================= -->
+
+            <div class="conversas-area">
+
+                <div class="titulo-conversas">
+
+                    <span>
+                        Conversas
+                    </span>
+
+                </div>
+
+                <div
+                    id="listaConversas"
+                    class="lista-conversas"
+                ></div>
+
+            </div>
+
+
+            <!-- =================================================
+                 PARTE INFERIOR
+                 ================================================= -->
+
+            <div class="sidebar-bottom">
+
+                <!-- USUÁRIO -->
+
+                <button
+                    id="perfilUsuario"
+                    class="perfil-usuario"
+                    type="button"
+                    title="Abrir perfil"
+                >
+
+                    <div class="avatar-usuario">
+                        👤
+                    </div>
+
+                    <div class="dados-usuario">
+
+                        <strong id="nomeUsuario">
+                            Minha conta
+                        </strong>
+
+                        <span>
+                            Perfil
+                        </span>
+
+                    </div>
+
+                </button>
+
+
+                <!-- SAIR -->
+
+                <button
+                    id="btnLogout"
+                    class="btn-logout"
+                    title="Sair"
+                    type="button"
+                >
+
+                    🚪
+
+                    <span>
+                        Sair
+                    </span>
+
+                </button>
+
+            </div>
 
         </aside>
 
 
-        <!-- CHAT -->
+        <!-- =================================================
+             ÁREA PRINCIPAL
+             ================================================= -->
 
         <main class="chat-container">
 
+
+            <!-- CABEÇALHO -->
+
             <header class="chat-header">
 
-                <h1>🤖 Minha IA</h1>
+                <div class="chat-header-info">
+
+                    <div class="avatar-header">
+                        🤖
+                    </div>
+
+                    <div>
+
+                        <h1 id="tituloProjetoAtual">
+                            Projeto MASR
+                        </h1>
+
+                        <span id="subtituloProjetoAtual">
+                            Online
+                        </span>
+
+                    </div>
+
+                </div>
 
             </header>
 
 
-            <div id="chat" class="chat"></div>
+            <!-- =================================================
+                 CHAT
+                 ================================================= -->
+
+            <div
+                id="chat"
+                class="chat"
+            ></div>
 
 
-            <div class="entrada">
+            <!-- =================================================
+                 ENTRADA
+                 ================================================= -->
 
-                <input
-                    id="pergunta"
-                    type="text"
-                    placeholder="Digite sua pergunta..."
-                    autocomplete="off"
-                >
+            <div class="entrada-container">
 
-                <button id="btnEnviar">
-                    Enviar
-                </button>
+                <div class="entrada">
+
+                    <input
+                        id="pergunta"
+                        type="text"
+                        placeholder="Digite sua pergunta..."
+                        autocomplete="off"
+                    >
+
+                    <button
+                        id="btnEnviar"
+                        type="button"
+                    >
+                        Enviar
+                    </button>
+
+                </div>
+
+                <div class="aviso-entrada">
+
+                    A IA pode cometer erros.
+                    Verifique informações importantes.
+
+                </div>
 
             </div>
 
         </main>
 
+
+        <!-- =================================================
+             CONFIGURAÇÕES
+             ================================================= -->
+
+        <div
+            id="painelConfiguracoes"
+            class="configuracoes-overlay escondido"
+            aria-hidden="true"
+        >
+
+            <!-- FUNDO -->
+
+            <div
+                id="fecharConfiguracoesFundo"
+                class="configuracoes-fundo"
+            ></div>
+
+
+            <!-- MODAL -->
+
+            <section
+                class="configuracoes-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="tituloConfiguracoes"
+            >
+
+                <!-- CABEÇALHO -->
+
+                <div class="configuracoes-header">
+
+                    <div class="configuracoes-header-titulo">
+
+                        <div class="configuracoes-icone">
+                            ⚙️
+                        </div>
+
+                        <div>
+
+                            <h2 id="tituloConfiguracoes">
+                                Configurações
+                            </h2>
+
+                            <p>
+                                Personalize o Projeto MASR
+                            </p>
+
+                        </div>
+
+                    </div>
+
+
+                    <button
+                        id="btnFecharConfiguracoes"
+                        class="btn-fechar-configuracoes"
+                        type="button"
+                        title="Fechar"
+                    >
+                        ×
+                    </button>
+
+                </div>
+
+
+                <!-- CONTEÚDO -->
+
+                <div class="configuracoes-corpo">
+
+                    <!-- MENU -->
+
+                    <nav class="configuracoes-menu">
+
+                        <button
+                            class="config-menu-item ativo"
+                            type="button"
+                            data-secao="configPerfil"
+                        >
+
+                            <span>👤</span>
+
+                            Perfil
+
+                        </button>
+
+
+                        <button
+                            class="config-menu-item"
+                            type="button"
+                            data-secao="configAparencia"
+                        >
+
+                            <span>🎨</span>
+
+                            Aparência
+
+                        </button>
+
+
+                        <button
+                            class="config-menu-item"
+                            type="button"
+                            data-secao="configIA"
+                        >
+
+                            <span>🤖</span>
+
+                            Inteligência artificial
+
+                        </button>
+
+
+                        <button
+                            class="config-menu-item"
+                            type="button"
+                            data-secao="configSobre"
+                        >
+
+                            <span>ℹ️</span>
+
+                            Sobre
+
+                        </button>
+
+                    </nav>
+
+
+                    <!-- SEÇÕES -->
+
+                    <div class="configuracoes-secoes">
+
+
+                        <!-- PERFIL -->
+
+                        <section
+                            id="configPerfil"
+                            class="config-secao ativa"
+                        >
+
+                            <div class="config-secao-titulo">
+
+                                <h3>
+                                    Perfil
+                                </h3>
+
+                                <p>
+                                    Informações da sua conta.
+                                </p>
+
+                            </div>
+
+
+                            <div class="perfil-config-card">
+
+                                <div class="avatar-config">
+                                    👤
+                                </div>
+
+                                <div class="perfil-config-info">
+
+                                    <strong id="usuarioConfiguracoes">
+                                        Usuário
+                                    </strong>
+
+                                    <span>
+                                        Conta do Projeto MASR
+                                    </span>
+
+                                </div>
+
+                            </div>
+
+                        </section>
+
+
+                        <!-- APARÊNCIA -->
+
+                        <section
+                            id="configAparencia"
+                            class="config-secao"
+                        >
+
+                            <div class="config-secao-titulo">
+
+                                <h3>
+                                    Aparência
+                                </h3>
+
+                                <p>
+                                    Personalize a aparência do Projeto MASR.
+                                </p>
+
+                            </div>
+
+
+                            <div class="config-opcao">
+
+                                <div>
+
+                                    <strong>
+                                        Tema escuro
+                                    </strong>
+
+                                    <span>
+                                        Alterar entre tema claro e escuro.
+                                    </span>
+
+                                </div>
+
+
+                                <label class="config-switch">
+
+                                    <input
+                                        id="configTema"
+                                        type="checkbox"
+                                    >
+
+                                    <span class="config-slider"></span>
+
+                                </label>
+
+                            </div>
+
+                        </section>
+
+
+                        <!-- IA -->
+
+                        <section
+                            id="configIA"
+                            class="config-secao"
+                        >
+
+                            <div class="config-secao-titulo">
+
+                                <h3>
+                                    Inteligência artificial
+                                </h3>
+
+                                <p>
+                                    Informações sobre o modelo utilizado.
+                                </p>
+
+                            </div>
+
+
+                            <div class="config-opcao informativo">
+
+                                <div>
+
+                                    <strong>
+                                        Modelo atual
+                                    </strong>
+
+                                    <span>
+                                        Qwen2.5 0.5B Instruct
+                                    </span>
+
+                                </div>
+
+                                <span class="status-config">
+                                    Local
+                                </span>
+
+                            </div>
+
+
+                            <div class="config-opcao informativo">
+
+                                <div>
+
+                                    <strong>
+                                        Memória
+                                    </strong>
+
+                                    <span>
+                                        Sistema de memória do Projeto MASR
+                                    </span>
+
+                                </div>
+
+                                <span class="status-config">
+                                    Ativa
+                                </span>
+
+                            </div>
+
+                        </section>
+
+
+                        <!-- SOBRE -->
+
+                        <section
+                            id="configSobre"
+                            class="config-secao"
+                        >
+
+                            <div class="config-secao-titulo">
+
+                                <h3>
+                                    Sobre
+                                </h3>
+
+                                <p>
+                                    Informações do Projeto MASR.
+                                </p>
+
+                            </div>
+
+
+                            <div class="sobre-masr">
+
+                                <strong>
+                                    Projeto MASR
+                                </strong>
+
+                                <p>
+                                    Seu assistente pessoal de inteligência
+                                    artificial.
+                                </p>
+
+                                <span>
+                                    Versão 3.2
+                                </span>
+
+                            </div>
+
+                        </section>
+
+                    </div>
+
+                </div>
+
+
+                <!-- RODAPÉ -->
+
+                <div class="configuracoes-footer">
+
+                    <button
+                        id="btnFecharConfiguracoes2"
+                        class="btn-config-fechar"
+                        type="button"
+                    >
+                        Fechar
+                    </button>
+
+                </div>
+
+            </section>
+
+        </div>
+
+        <!-- =================================================
+             MODAL DE PROJETO
+             ================================================= -->
+
+        <div
+            id="painelProjeto"
+            class="projeto-overlay escondido"
+            aria-hidden="true"
+        >
+
+            <!-- FUNDO -->
+
+            <div
+                id="fecharProjetoFundo"
+                class="projeto-fundo"
+            ></div>
+
+
+            <!-- MODAL -->
+
+            <section
+                class="projeto-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="tituloModalProjeto"
+            >
+
+                <!-- CABEÇALHO -->
+
+                <div class="projeto-modal-header">
+
+                    <div>
+
+                        <h2 id="tituloModalProjeto">
+                            Novo projeto
+                        </h2>
+
+                        <p>
+                            Organize suas conversas em projetos.
+                        </p>
+
+                    </div>
+
+
+                    <button
+                        id="btnFecharProjeto"
+                        class="btn-fechar-projeto"
+                        type="button"
+                        title="Fechar"
+                    >
+                        ×
+                    </button>
+
+                </div>
+
+
+                <!-- FORMULÁRIO -->
+
+                <form id="formProjeto">
+
+                    <div class="projeto-campo">
+
+                        <label for="projetoNome">
+                            Nome do projeto
+                        </label>
+
+                        <input
+                            id="projetoNome"
+                            type="text"
+                            placeholder="Ex.: CEFET-MG"
+                            maxlength="80"
+                            required
+                        >
+
+                    </div>
+
+
+                    <div class="projeto-campo">
+
+                        <label for="projetoDescricao">
+                            Descrição
+                        </label>
+
+                        <textarea
+                            id="projetoDescricao"
+                            placeholder="Descreva brevemente este projeto..."
+                            maxlength="250"
+                            rows="4"
+                        ></textarea>
+
+                    </div>
+
+
+                    <div class="projeto-campo">
+
+                        <label for="projetoIcones">
+                            Ícone
+                        </label>
+
+                        <div class="projeto-icones">
+
+                            <button
+                                type="button"
+                                class="projeto-icone-opcao ativo"
+                                data-icone="📁"
+                            >
+                                📁
+                            </button>
+
+                            <button
+                                type="button"
+                                class="projeto-icone-opcao"
+                                data-icone="📚"
+                            >
+                                📚
+                            </button>
+
+                            <button
+                                type="button"
+                                class="projeto-icone-opcao"
+                                data-icone="💻"
+                            >
+                                💻
+                            </button>
+
+                            <button
+                                type="button"
+                                class="projeto-icone-opcao"
+                                data-icone="🎯"
+                            >
+                                🎯
+                            </button>
+
+                            <button
+                                type="button"
+                                class="projeto-icone-opcao"
+                                data-icone="🧠"
+                            >
+                                🧠
+                            </button>
+
+                            <button
+                                type="button"
+                                class="projeto-icone-opcao"
+                                data-icone="🚀"
+                            >
+                                🚀
+                            </button>
+
+                        </div>
+
+                        <input
+                            id="projetoIcones"
+                            type="hidden"
+                            value="📁"
+                        >
+
+                    </div>
+
+
+                    <!-- AÇÕES -->
+
+                    <div class="projeto-modal-footer">
+
+                        <button
+                            id="btnCancelarProjeto"
+                            type="button"
+                            class="btn-projeto-cancelar"
+                        >
+                            Cancelar
+                        </button>
+
+                        <button
+                            id="btnSalvarProjeto"
+                            type="submit"
+                            class="btn-projeto-salvar"
+                        >
+                            Criar projeto
+                        </button>
+
+                    </div>
+
+                </form>
+
+            </section>
+
+                </div>
+
+
+        <!-- =================================================
+             CRIADOR DE SITES
+             ================================================= -->
+
+        <div
+            id="painelCriadorSites"
+            class="criador-sites-overlay escondido"
+            aria-hidden="true"
+        >
+
+            <!-- FUNDO -->
+
+            <div
+                id="fecharCriadorSitesFundo"
+                class="criador-sites-fundo"
+            ></div>
+
+
+            <!-- MODAL -->
+
+            <section
+                class="criador-sites-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="tituloCriadorSites"
+            >
+
+                <!-- CABEÇALHO -->
+
+                <div class="criador-sites-header">
+
+                    <div class="criador-sites-header-titulo">
+
+                        <div class="criador-sites-icone">
+                            🌐
+                        </div>
+
+                        <div>
+
+                            <h2 id="tituloCriadorSites">
+                                Criador de Sites
+                            </h2>
+
+                            <p>
+                                Crie sites usando inteligência artificial.
+                            </p>
+
+                        </div>
+
+                    </div>
+
+
+                    <button
+                        id="btnFecharCriadorSites"
+                        class="btn-fechar-criador-sites"
+                        type="button"
+                        title="Fechar"
+                    >
+                        ×
+                    </button>
+
+                </div>
+
+
+                <!-- CONTEÚDO -->
+
+                <div class="criador-sites-corpo">
+
+                    <!-- DESCRIÇÃO -->
+
+                    <div class="criador-sites-campo">
+
+                        <label for="descricaoSite">
+                            📝 Descreva o site que você deseja criar
+                        </label>
+
+                        <textarea
+                            id="descricaoSite"
+                            placeholder="Ex.: Crie um site moderno para uma loja de roupas, com página inicial, produtos, sobre nós e contato..."
+                            rows="7"
+                        ></textarea>
+
+                    </div>
+
+
+                    <!-- LOCALIZAÇÃO -->
+
+                    <div class="criador-sites-campo">
+
+                        <label for="localizacaoSite">
+                            📍 Localização ou endereço
+                        </label>
+
+                        <input
+                            id="localizacaoSite"
+                            type="text"
+                            placeholder="Ex.: Belo Horizonte - MG"
+                        >
+
+                        <small>
+                            Opcional. Futuramente o MASR poderá usar
+                            informações públicas dessa localização.
+                        </small>
+
+                    </div>
+
+
+                    <!-- AÇÕES -->
+
+                    <div class="criador-sites-acoes">
+
+                        <button
+                            id="btnCancelarCriadorSites"
+                            type="button"
+                            class="btn-criador-cancelar"
+                        >
+                            Cancelar
+                        </button>
+
+                        <button
+                            id="btnGerarSite"
+                            type="button"
+                            class="btn-gerar-site"
+                        >
+                            ✨ Gerar site
+                        </button>
+
+                    </div>
+
+
+                    <!-- PRÉ-VISUALIZAÇÃO -->
+
+                    <div class="criador-sites-preview">
+
+                        <div class="criador-sites-preview-header">
+
+                            <span>
+                                👁️ Pré-visualização
+                            </span>
+
+                            <span class="preview-status">
+                                Aguardando geração
+                            </span>
+
+                        </div>
+
+
+                        <div
+                            id="previewSite"
+                            class="preview-site-conteudo"
+                        >
+
+                            <div class="preview-placeholder">
+
+                                <div class="preview-placeholder-icone">
+                                    🌐
+                                </div>
+
+                                <h3>
+                                    Seu site aparecerá aqui
+                                </h3>
+
+                                <p>
+                                    Descreva o site que você deseja criar
+                                    e clique em <strong>Gerar site</strong>.
+                                </p>
+
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+        </div>
+
+
     </div>
 
+    <!-- =====================================================
+         MARKDOWN
+         ===================================================== -->
 
-    <!-- MARKDOWN -->
+    <script
+        src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"
+    ></script>
 
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
-    <!-- NOSSO JAVASCRIPT -->
+    <!-- =====================================================
+         JAVASCRIPT
+         ===================================================== -->
 
-    <script src="{{ url_for('static', filename='app.js') }}"></script>
+    <script
+        src="{{ url_for('static', filename='app.js') }}"
+    ></script>
 
 </body>
 
 </html>
+```

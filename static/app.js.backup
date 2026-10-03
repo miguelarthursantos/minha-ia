@@ -1,0 +1,673 @@
+﻿console.log("PROJETO MASR â€” APP.JS 3.4 CARREGOU!");
+
+/* =========================================================
+   PROJETO MASR â€” JAVASCRIPT 3.4
+   ConfiguraÃ§Ãµes + Perfil + Projetos + Conversas + Arquivos
+   ========================================================= */
+
+
+/* =========================================================
+   ESTADO
+   ========================================================= */
+
+let conversaAtual = null;
+let enviandoPergunta = false;
+
+let projetoAtualId = null;
+let projetoAtual = null;
+
+let projetoEditandoId = null;
+
+
+/* =========================================================
+   ELEMENTOS PRINCIPAIS
+   ========================================================= */
+
+const loginTela =
+    document.getElementById("loginTela");
+
+const appTela =
+    document.getElementById("appTela");
+
+const loginForm =
+    document.getElementById("loginForm");
+
+const cadastroForm =
+    document.getElementById("cadastroForm");
+
+const perguntaInput =
+    document.getElementById("pergunta");
+
+const chat =
+    document.getElementById("chat");
+
+const listaConversas =
+    document.getElementById("listaConversas");
+
+const btnEnviar =
+    document.getElementById("btnEnviar");
+
+const btnNovaConversa =
+    document.getElementById("btnNovaConversa");
+
+const btnTodasConversas =
+    document.getElementById("btnTodasConversas");
+
+const btnTema =
+    document.getElementById("btnTema");
+
+const btnLogout =
+    document.getElementById("btnLogout");
+
+const uploadPdf =
+    document.getElementById("uploadPdf");
+
+
+/* =========================================================
+   ELEMENTOS â€” CONFIGURAÃ‡Ã•ES
+   ========================================================= */
+
+const btnConfiguracoes =
+    document.getElementById("btnConfiguracoes");
+
+const perfilUsuario =
+    document.getElementById("perfilUsuario");
+
+const nomeUsuario =
+    document.getElementById("nomeUsuario");
+
+const painelConfiguracoes =
+    document.getElementById("painelConfiguracoes");
+
+const fecharConfiguracoesFundo =
+    document.getElementById("fecharConfiguracoesFundo");
+
+const btnFecharConfiguracoes =
+    document.getElementById("btnFecharConfiguracoes");
+
+const btnFecharConfiguracoes2 =
+    document.getElementById("btnFecharConfiguracoes2");
+
+const usuarioConfiguracoes =
+    document.getElementById("usuarioConfiguracoes");
+
+const configTema =
+    document.getElementById("configTema");
+
+
+/* =========================================================
+   ELEMENTOS â€” PROJETOS
+   ========================================================= */
+
+const listaProjetos =
+    document.getElementById("listaProjetos");
+
+const listaDocumentos =
+    document.getElementById("listaDocumentos");
+
+const btnNovoProjeto =
+    document.getElementById("btnNovoProjeto");
+
+const painelProjeto =
+    document.getElementById("painelProjeto");
+
+const fecharProjetoFundo =
+    document.getElementById("fecharProjetoFundo");
+
+const btnFecharProjeto =
+    document.getElementById("btnFecharProjeto");
+
+const btnCancelarProjeto =
+    document.getElementById("btnCancelarProjeto");
+
+const formProjeto =
+    document.getElementById("formProjeto");
+
+const tituloModalProjeto =
+    document.getElementById("tituloModalProjeto");
+
+const projetoNome =
+    document.getElementById("projetoNome");
+
+const projetoDescricao =
+    document.getElementById("projetoDescricao");
+
+const projetoIcones =
+    document.getElementById("projetoIcones");
+
+const btnSalvarProjeto =
+    document.getElementById("btnSalvarProjeto");
+
+const tituloProjetoAtual =
+    document.getElementById("tituloProjetoAtual");
+
+const subtituloProjetoAtual =
+    document.getElementById("subtituloProjetoAtual");
+
+
+/* =========================================================
+   LOGIN / APP
+   ========================================================= */
+
+function mostrarLogin() {
+
+    if (loginTela) {
+        loginTela.style.display = "flex";
+    }
+
+    if (appTela) {
+        appTela.style.display = "none";
+    }
+}
+
+
+function mostrarApp() {
+
+    if (loginTela) {
+        loginTela.style.display = "none";
+    }
+
+    if (appTela) {
+        appTela.style.display = "flex";
+    }
+
+    setTimeout(() => {
+
+        if (perguntaInput) {
+            perguntaInput.focus();
+        }
+
+    }, 100);
+}
+
+
+/* =========================================================
+   LOGIN
+   ========================================================= */
+
+async function fazerLogin(event) {
+
+    event.preventDefault();
+
+    const usuario =
+        document
+            .getElementById("loginUsuario")
+            .value
+            .trim();
+
+    const senha =
+        document
+            document
+            .getElementById("loginSenha")
+            .value;
+
+    if (!usuario || !senha) {
+
+        mostrarAviso(
+            "Preencha usuÃ¡rio e senha."
+        );
+
+        return;
+    }
+
+    try {
+
+        const resposta =
+            await fetch(
+                "/login",
+                {
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:
+                        JSON.stringify({
+                            usuario:
+                                usuario,
+
+                            senha:
+                                senha
+                        })
+                }
+            );
+
+        const dados =
+            await resposta.json();
+
+        if (dados.sucesso) {
+
+            if (loginForm) {
+                loginForm.reset();
+            }
+
+            mostrarApp();
+
+            await carregarUsuario();
+
+            await carregarProjetos();
+
+            await carregarConversas();
+
+        } else {
+
+            mostrarAviso(
+                dados.erro ||
+                "UsuÃ¡rio ou senha incorretos."
+            );
+        }
+
+    } catch (erro) {
+
+        console.error(
+            "Erro no login:",
+            erro
+        );
+
+        mostrarAviso(
+            "NÃ£o foi possÃ­vel conectar ao servidor."
+        );
+    }
+}
+
+            document
+            .getElementById("loginSenha")
+            .value;
+
+    if (!usuario || !senha) {
+
+        mostrarAviso(
+            "Preencha usuÃ¡rio e senha."
+        );
+
+        return;
+    }
+
+    try {
+
+        const resposta =
+            await fetch(
+                "/login",
+                {
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+                        usuario: usuario,
+                        senha: senha
+                    })
+                }
+            );
+
+        const dados =
+            await resposta.json();
+
+        if (dados.sucesso) {
+
+            loginForm.reset();
+
+            mostrarApp();
+
+            await carregarUsuario();
+
+            await carregarProjetos();
+
+            await carregarConversas();
+
+        } else {
+
+            mostrarAviso(
+                dados.erro ||
+                "UsuÃ¡rio ou senha incorretos."
+            );
+        }
+
+    } catch (erro) {
+
+        console.error(
+            "Erro no login:",
+            erro
+        );
+
+        mostrarAviso(
+            "NÃ£o foi possÃ­vel conectar ao servidor."
+        );
+    }
+}
+
+
+if (loginForm) {
+
+    loginForm.addEventListener(
+        "submit",
+        fazerLogin
+    );
+}
+
+
+/* =========================================================
+   CADASTRO
+   ========================================================= */
+
+async function fazerCadastro(event) {
+
+    event.preventDefault();
+
+    const usuario =
+        document
+            .getElementById("cadastroUsuario")
+            .value
+            .trim();
+
+    const senha =
+        document
+            .getElementById("cadastroSenha")
+            .value;
+
+    if (!usuario || !senha) {
+
+        mostrarAviso(
+            "Preencha todos os campos."
+        );
+
+        return;
+    }
+
+    try {
+
+        const resposta =
+            await fetch(
+                "/cadastro",
+                {
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+                        usuario: usuario,
+                        senha: senha
+                    })
+                }
+            );
+
+        const dados =
+            await resposta.json();
+
+        if (dados.sucesso) {
+
+            mostrarAviso(
+                "Conta criada com sucesso! Agora faÃ§a login. âœ…"
+            );
+
+            cadastroForm.reset();
+
+        } else {
+
+            mostrarAviso(
+                dados.erro ||
+                "Erro ao criar conta."
+            );
+        }
+
+    } catch (erro) {
+
+        console.error(
+            "Erro no cadastro:",
+            erro
+        );
+
+        mostrarAviso(
+            "NÃ£o foi possÃ­vel conectar ao servidor."
+        );
+    }
+}
+
+
+if (cadastroForm) {
+
+    cadastroForm.addEventListener(
+        "submit",
+        fazerCadastro
+    );
+}
+
+
+/* =========================================================
+   USUÃRIO
+   ========================================================= */
+
+async function carregarUsuario() {
+
+    try {
+
+        const resposta =
+            await fetch(
+                "/usuario"
+            );
+
+        if (!resposta.ok) {
+            return;
+        }
+
+        const dados =
+            await resposta.json();
+
+        if (!dados.logado) {
+            return;
+        }
+
+        const usuario =
+            dados.usuario ||
+            dados.nome ||
+            dados.username ||
+            "UsuÃ¡rio";
+
+        if (nomeUsuario) {
+            nomeUsuario.textContent =
+                usuario;
+        }
+
+        if (usuarioConfiguracoes) {
+            usuarioConfiguracoes.textContent =
+                usuario;
+        }
+
+    } catch (erro) {
+
+        console.error(
+            "Erro ao carregar usuÃ¡rio:",
+            erro
+        );
+    }
+}
+
+
+/* =========================================================
+   PROJETOS
+   ========================================================= */
+
+async function carregarProjetos() {
+
+    if (!listaProjetos) {
+        return;
+    }
+
+    try {
+
+        const resposta =
+            await fetch(
+                "/projetos"
+            );
+
+        const dados =
+            await resposta.json();
+
+        listaProjetos.innerHTML = "";
+
+        if (
+            !dados ||
+            !Array.isArray(dados)
+        ) {
+            return;
+        }
+
+        dados.forEach(
+            function(projeto) {
+
+                const item =
+                    document.createElement(
+                        "div"
+                    );
+
+                item.className =
+                    "projeto-item";
+
+                item.dataset.id =
+                    projeto.id;
+
+                const icone =
+                    projeto.icone ||
+                    "ðŸ“";
+
+                const nome =
+                    projeto.nome ||
+                    "Projeto";
+
+                const descricao =
+                    projeto.descricao ||
+                    "";
+
+                item.innerHTML = `
+                    <div class="projeto-icone">
+                        ${icone}
+                    </div>
+
+                    <div class="projeto-info">
+                        <div class="projeto-nome">
+                            ${nome}
+                        </div>
+
+                        <div class="projeto-descricao">
+                            ${descricao}
+                        </div>
+                    </div>
+                `;
+
+                item.addEventListener(
+                    "click",
+                    function() {
+                        abrirProjeto(
+                            projeto.id
+                        );
+                    }
+                );
+
+                listaProjetos.appendChild(
+                    item
+                );
+            }
+        );
+
+    } catch (erro) {
+
+        console.error(
+            "Erro ao carregar projetos:",
+            erro
+        );
+    }
+}
+
+
+/* =========================================================
+   ABRIR PROJETO
+   ========================================================= */
+
+async function abrirProjeto(id) {
+
+    if (!id) {
+        return;
+    }
+
+    projetoAtualId =
+        Number(id);
+
+    try {
+
+        const resposta =
+            await fetch(
+                `/projeto/${id}`
+            );
+
+        const dados =
+            await resposta.json();
+
+        if (!resposta.ok) {
+
+            mostrarAviso(
+                dados.erro ||
+                "NÃ£o foi possÃ­vel abrir o projeto."
+            );
+
+            return;
+        }
+
+        projetoAtual =
+            dados.projeto ||
+            null;
+
+        if (tituloProjetoAtual) {
+
+            tituloProjetoAtual.textContent =
+                projetoAtual &&
+                projetoAtual.nome
+                    ? projetoAtual.nome
+                    : "Projeto";
+        }
+
+        if (subtituloProjetoAtual) {
+
+            subtituloProjetoAtual.textContent =
+                projetoAtual &&
+                projetoAtual.descricao
+                    ? projetoAtual.descricao
+                    : "";
+        }
+
+        if (
+            dados.conversas &&
+            Array.isArray(
+                dados.conversas
+            )
+        ) {
+
+            renderizarConversas(
+                dados.conversas
+            );
+
+        } else {
+
+            await carregarConversas();
+        }
+
+    } catch (erro) {
+
+        console.error(
+            "Erro ao abrir projeto:",
+            erro
+        );
+
+        mostrarAviso(
+            "NÃ£o foi possÃ­vel abrir o projeto."
+        );
+    }
+}
+
