@@ -977,9 +977,9 @@ def listar_projetos():
         for projeto in projetos
     ])
 
-# ==========================================================
-# CRIADOR DE SITES — GERAR SITE COMPLETO
-# ==========================================================
+# =========================================================
+# CRIADOR DE SITES — CRIAR SITE
+# =========================================================
 
 @app.route("/sites", methods=["POST"])
 @login_obrigatorio
@@ -989,914 +989,102 @@ def criar_site():
 
     dados = request.get_json() or {}
 
-    nome = str(dados.get("nome", "")).strip()
-    prompt = str(dados.get("prompt", "")).strip()
+    nome = str(
+        dados.get(
+            "nome",
+            ""
+        )
+    ).strip()
+
+    prompt = str(
+        dados.get(
+            "prompt",
+            ""
+        )
+    ).strip()
 
     if not nome:
         nome = "Novo Site"
 
     if not prompt:
+
         return jsonify({
             "sucesso": False,
             "erro": "Descreva o site que deseja criar."
         }), 400
 
-    # ======================================================
+    # -----------------------------------------------------
     # INSTRUÇÃO PARA A IA
-    # ======================================================
+    # -----------------------------------------------------
 
     instrucao = f"""
-Crie o conteúdo de um site profissional para:
+Você é um gerador profissional de páginas HTML.
 
+Sua única tarefa é criar UM SITE COMPLETO em HTML.
+
+DESCRIÇÃO DO USUÁRIO:
 {prompt}
 
-Organize sua resposta usando:
+REGRAS ABSOLUTAMENTE OBRIGATÓRIAS:
 
-# TÍTULO PRINCIPAL
+1. Responda SOMENTE com código HTML.
+2. A primeira coisa da resposta deve ser:
+<!DOCTYPE html>
+3. Gere um documento HTML completo.
+4. O documento deve conter <html>, <head> e <body>.
+5. Todo o CSS deve ficar dentro de uma tag <style>.
+6. Todo o JavaScript necessário deve ficar dentro de uma tag <script>.
+7. NÃO crie arquivos separados.
+8. NÃO gere Python.
+9. NÃO gere Flask.
+10. NÃO use @app.route.
+11. NÃO use def.
+12. NÃO use return como código Python.
+13. NÃO escreva código de servidor.
+14. NÃO escreva explicações.
+15. NÃO use Markdown.
+16. NÃO use blocos de código com ```html, ```python, ```css ou ```javascript.
+17. O resultado precisa funcionar quando for salvo como arquivo .html e aberto diretamente no navegador.
+18. Crie um design moderno e responsivo.
+19. Coloque todos os elementos necessários dentro do próprio HTML.
+20. Use JavaScript somente quando for necessário para alguma interação.
+21. Não invente informações reais de empresas, pessoas, endereços, telefones ou preços.
+22. Se alguma informação não for fornecida, utilize informações genéricas.
 
-Texto de apresentação.
-
-## SOBRE
-
-Texto.
-
-## SERVIÇOS
-
-- Serviço 1
-- Serviço 2
-- Serviço 3
-
-## PRODUTOS
-
-- Produto 1
-- Produto 2
-- Produto 3
-
-## BENEFÍCIOS
-
-- Benefício 1
-- Benefício 2
-- Benefício 3
-
-## CONTATO
-
-Texto de contato.
-
-IMPORTANTE:
-
-- Não invente informações específicas.
-- Não invente telefones.
-- Não invente endereços.
-- Não invente preços.
-- Não invente e-mails.
-- Não invente redes sociais.
-- Use somente informações fornecidas pelo usuário.
-- Crie bastante conteúdo.
-- Não escreva explicações sobre o que está fazendo.
-- Não repita estas instruções.
+ENTREGUE SOMENTE O DOCUMENTO HTML COMPLETO.
 """
+
+    # -----------------------------------------------------
+    # GERAR HTML COMPLETO
+    # -----------------------------------------------------
 
     try:
 
-        mensagens_site = [
-            {
-                "role": "system",
-                "content": (
-                    "Você cria conteúdo profissional para sites. "
-                    "Responda somente com o conteúdo do site."
-                )
-            },
-            {
-                "role": "user",
-                "content": instrucao
-            }
-        ]
-
-        print(
-            ">>> GERANDO SITE COM A IA <<<",
-            flush=True
-        )
-
         resultado = ia(
-            mensagens_site,
-            max_new_tokens=1800,
-            do_sample=False
+            instrucao,
+            max_new_tokens=2500,
+            do_sample=True,
+            temperature=0.7,
+            return_full_text=False
         )
 
-        print(
-            ">>> IA TERMINOU A GERAÇÃO <<<",
-            flush=True
-        )
-
-        # ==================================================
-        # EXTRAIR RESPOSTA
-        # ==================================================
-
-        site_resposta = ""
-
-        gerado = resultado[0].get(
-            "generated_text",
-            ""
-        )
-
-        if isinstance(gerado, list):
-
-            for mensagem in reversed(gerado):
-
-                if (
-                    isinstance(mensagem, dict)
-                    and mensagem.get("role") == "assistant"
-                ):
-
-                    site_resposta = str(
-                        mensagem.get("content", "")
-                    ).strip()
-
-                    break
-
-        else:
-
-            site_resposta = str(
-                gerado
-            ).strip()
-
-        if not site_resposta:
-
-            return jsonify({
-                "sucesso": False,
-                "erro": "A IA não retornou conteúdo."
-            }), 500
-
-        # ==================================================
-        # SE A IA JÁ GEROU HTML, USAR DIRETAMENTE
-        # ==================================================
-
-        resposta_minuscula = site_resposta.lower()
-
-        if "<html" in resposta_minuscula:
-
-            site_html = site_resposta
-
-            # Remover possíveis blocos Markdown
-            if "```html" in site_html.lower():
-
-                inicio = site_html.lower().find(
-                    "```html"
-                )
-
-                site_html = site_html[
-                    inicio + len("```html"):
-                ].strip()
-
-                if "```" in site_html:
-
-                    site_html = site_html.split(
-                        "```",
-                        1
-                    )[0].strip()
-
-        else:
-
-            # ==================================================
-            # CONVERTER MARKDOWN PARA HTML
-            # ==================================================
-
-            linhas = site_resposta.splitlines()
-
-            titulo = "Novo Site"
-
-            corpo = []
-
-            menu = []
-
-            em_lista = False
-
-            for linha in linhas:
-
-                linha = linha.strip()
-
-                if not linha:
-                    continue
-
-                # ------------------------------------------
-                # TÍTULO
-                # ------------------------------------------
-
-                if linha.startswith("# "):
-
-                    texto = linha[2:].strip()
-
-                    if texto:
-                        titulo = texto
-
-                    continue
-
-                # ------------------------------------------
-                # SUBTÍTULO
-                # ------------------------------------------
-
-                if linha.startswith("## "):
-
-                    if em_lista:
-
-                        corpo.append("</ul>")
-                        em_lista = False
-
-                    texto = linha[3:].strip()
-
-                    if texto:
-
-                        slug = (
-                            texto
-                            .lower()
-                            .replace(" ", "-")
-                            .replace("á", "a")
-                            .replace("à", "a")
-                            .replace("ã", "a")
-                            .replace("â", "a")
-                            .replace("é", "e")
-                            .replace("ê", "e")
-                            .replace("í", "i")
-                            .replace("ó", "o")
-                            .replace("ô", "o")
-                            .replace("õ", "o")
-                            .replace("ú", "u")
-                            .replace("ç", "c")
-                        )
-
-                        menu.append(
-                            (texto, slug)
-                        )
-
-                        corpo.append(
-                            f'<section id="{slug}">'
-                        )
-
-                        corpo.append(
-                            f"<h2>{texto}</h2>"
-                        )
-
-                    continue
-
-                # ------------------------------------------
-                # SUBSEÇÃO
-                # ------------------------------------------
-
-                if linha.startswith("### "):
-
-                    texto = linha[4:].strip()
-
-                    if texto:
-
-                        corpo.append(
-                            f"<h3>{texto}</h3>"
-                        )
-
-                    continue
-
-                # ------------------------------------------
-                # LISTA
-                # ------------------------------------------
-
-                if linha.startswith("- "):
-
-                    if not em_lista:
-
-                        corpo.append("<ul>")
-                        em_lista = True
-
-                    item = linha[2:].strip()
-
-                    corpo.append(
-                        f"<li>{item}</li>"
-                    )
-
-                    continue
-
-                # ------------------------------------------
-                # FECHAR LISTA
-                # ------------------------------------------
-
-                if em_lista:
-
-                    corpo.append("</ul>")
-                    em_lista = False
-
-                # ------------------------------------------
-                # LINKS MARKDOWN
-                # ------------------------------------------
-
-                if (
-                    "[" in linha
-                    and "](" in linha
-                    and ")" in linha
-                ):
-
-                    inicio = linha.find("[")
-
-                    meio = linha.find("](", inicio)
-
-                    fim = linha.find(")", meio)
-
-                    if (
-                        inicio >= 0
-                        and meio > inicio
-                        and fim > meio
-                    ):
-
-                        texto_link = linha[
-                            inicio + 1:
-                            meio
-                        ]
-
-                        url_link = linha[
-                            meio + 2:
-                            fim
-                        ]
-
-                        linha = (
-                            linha[:inicio]
-                            + f'<a href="{url_link}" '
-                              'target="_blank">'
-                              f'{texto_link}'
-                              '</a>'
-                            + linha[fim + 1:]
-                        )
-
-                # ------------------------------------------
-                # PARÁGRAFO
-                # ------------------------------------------
-
-                corpo.append(
-                    f"<p>{linha}</p>"
-                )
-
-            if em_lista:
-
-                corpo.append("</ul>")
-
-            # Fechar última seção
-            corpo.append("</section>")
-
-            menu_html = ""
-
-            for texto_menu, slug_menu in menu:
-
-                menu_html += (
-                    f'<a href="#{slug_menu}">'
-                    f'{texto_menu}'
-                    '</a>'
-                )
-
-            corpo_html = "\n".join(corpo)
-
-            # ==================================================
-            # HTML COMPLETO
-            # ==================================================
-
-            site_html = f"""
-<!DOCTYPE html>
-<html lang="pt-BR">
-
-<head>
-
-<meta charset="UTF-8">
-
-<meta
-    name="viewport"
-    content="width=device-width, initial-scale=1.0"
->
-
-<title>{titulo}</title>
-
-<style>
-
-* {{
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-}}
-
-html {{
-    scroll-behavior: smooth;
-}}
-
-body {{
-    font-family:
-        Arial,
-        Helvetica,
-        sans-serif;
-
-    background:
-        linear-gradient(
-            135deg,
-            #111827,
-            #1f2937
-        );
-
-    color: #ffffff;
-
-    line-height: 1.7;
-}}
-
-header {{
-    position: sticky;
-    top: 0;
-
-    z-index: 1000;
-
-    background:
-        rgba(17, 24, 39, 0.95);
-
-    backdrop-filter: blur(10px);
-
-    border-bottom:
-        1px solid
-        rgba(255,255,255,0.1);
-
-    padding: 18px 30px;
-}}
-
-.header-container {{
-    max-width: 1200px;
-
-    margin: auto;
-
-    display: flex;
-
-    align-items: center;
-
-    justify-content: space-between;
-
-    gap: 30px;
-}}
-
-.logo {{
-    font-size: 28px;
-
-    font-weight: 800;
-
-    color: #f59e0b;
-}}
-
-nav {{
-    display: flex;
-
-    flex-wrap: wrap;
-
-    gap: 20px;
-}}
-
-nav a {{
-    color: #ffffff;
-
-    text-decoration: none;
-
-    font-weight: 600;
-
-    transition: 0.3s;
-}}
-
-nav a:hover {{
-    color: #f59e0b;
-}}
-
-.hero {{
-    min-height: 78vh;
-
-    display: flex;
-
-    align-items: center;
-
-    justify-content: center;
-
-    text-align: center;
-
-    padding: 80px 25px;
-
-    background:
-        radial-gradient(
-            circle at top,
-            rgba(245,158,11,0.25),
-            transparent 45%
-        );
-}}
-
-.hero-content {{
-    max-width: 900px;
-}}
-
-.hero h1 {{
-    font-size: clamp(
-        42px,
-        8vw,
-        82px
-    );
-
-    margin-bottom: 20px;
-
-    line-height: 1.05;
-}}
-
-.hero p {{
-    font-size: 20px;
-
-    color: #d1d5db;
-
-    margin-bottom: 30px;
-}}
-
-.hero-button {{
-    display: inline-block;
-
-    padding: 15px 28px;
-
-    background: #f59e0b;
-
-    color: #111827;
-
-    text-decoration: none;
-
-    border-radius: 12px;
-
-    font-weight: 800;
-
-    transition: 0.3s;
-}}
-
-.hero-button:hover {{
-    transform: translateY(-3px);
-
-    box-shadow:
-        0 10px 25px
-        rgba(245,158,11,0.3);
-}}
-
-main {{
-    background: #f9fafb;
-
-    color: #111827;
-}}
-
-section {{
-    max-width: 1200px;
-
-    margin: auto;
-
-    padding: 90px 25px;
-}}
-
-section:nth-child(even) {{
-    background: #f3f4f6;
-}}
-
-section h2 {{
-    font-size: 38px;
-
-    margin-bottom: 25px;
-
-    color: #111827;
-}}
-
-section h3 {{
-    font-size: 24px;
-
-    margin-top: 30px;
-
-    margin-bottom: 10px;
-}}
-
-section p {{
-    font-size: 18px;
-
-    margin-bottom: 18px;
-
-    color: #374151;
-}}
-
-section ul {{
-    list-style: none;
-
-    display: grid;
-
-    grid-template-columns:
-        repeat(
-            auto-fit,
-            minmax(220px, 1fr)
-        );
-
-    gap: 18px;
-
-    margin-top: 25px;
-}}
-
-section li {{
-    background: #ffffff;
-
-    padding: 25px;
-
-    border-radius: 16px;
-
-    box-shadow:
-        0 10px 30px
-        rgba(0,0,0,0.08);
-
-    font-weight: 600;
-
-    transition: 0.3s;
-}}
-
-section li:hover {{
-    transform: translateY(-4px);
-
-    box-shadow:
-        0 15px 35px
-        rgba(0,0,0,0.12);
-}}
-
-section a {{
-    color: #d97706;
-
-    font-weight: 700;
-}}
-
-footer {{
-    text-align: center;
-
-    padding: 35px 20px;
-
-    background: #111827;
-
-    color: #d1d5db;
-}}
-
-@media (max-width: 768px) {{
-
-    header {{
-        padding: 15px;
-    }}
-
-    .header-container {{
-        flex-direction: column;
-    }}
-
-    nav {{
-        justify-content: center;
-
-        gap: 12px;
-    }}
-
-    .hero {{
-        min-height: 70vh;
-
-        padding: 60px 20px;
-    }}
-
-    .hero p {{
-        font-size: 17px;
-    }}
-
-    section {{
-        padding: 60px 20px;
-    }}
-
-    section h2 {{
-        font-size: 30px;
-    }}
-
-}}
-
-</style>
-
-</head>
-
-<body>
-
-<header>
-
-    <div class="header-container">
-
-        <div class="logo">
-            {titulo}
-        </div>
-
-        <nav>
-            {menu_html}
-        </nav>
-
-    </div>
-
-</header>
-
-<div class="hero">
-
-    <div class="hero-content">
-
-        <h1>{titulo}</h1>
-
-        <p>
-            Uma experiência profissional,
-            moderna e pensada para você.
-        </p>
-
-        <a
-            href="#servicos"
-            class="hero-button"
-        >
-            Conheça nossos serviços
-        </a>
-
-    </div>
-
-</div>
-
-<main>
-
-    {corpo_html}
-
-</main>
-
-<footer>
-
-    <p>
-        © 2026 {titulo}
-    </p>
-
-</footer>
-
-</body>
-
-</html>
-"""
-
-        # ==================================================
-        # SALVAR NO BANCO
-        # ==================================================
-
-        agora = datetime.now().isoformat()
-
-        conn = sqlite3.connect("ia.db")
-
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            INSERT INTO sites (
-                usuario_id,
-                nome,
-                prompt,
-                html,
-                css,
-                js,
-                criada_em,
-                atualizada_em
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                session["usuario_id"],
-                nome,
-                prompt,
-                site_html,
-                "",
-                "",
-                agora,
-                agora
-            )
-        )
-
-        site_id = cursor.lastrowid
-
-        conn.commit()
-
-        conn.close()
-
-        print(
-            f">>> SITE SALVO COM ID {site_id} <<<",
-            flush=True
-        )
-
-        # ==================================================
-        # RETORNAR AO FRONTEND
-        # ==================================================
-
-        return jsonify({
-            "sucesso": True,
-            "id": site_id,
-            "nome": nome,
-            "html": site_html,
-            "css": "",
-            "js": ""
-        })
+        html = str(
+            resultado[0]["generated_text"]
+        ).strip()
 
     except Exception as erro:
 
         print(
-            ">>> ERRO AO GERAR SITE <<<",
-            flush=True
-        )
-
-        print(
-            repr(erro),
+            "ERRO AO GERAR SITE:",
+            erro,
             flush=True
         )
 
         return jsonify({
             "sucesso": False,
-            "erro": (
-                "Erro interno ao gerar o site: "
-                + str(erro)
-            )
+            "erro": "Não foi possível gerar o site com a IA."
         }), 500
-        # ==================================================
-        # GARANTIR DOCTYPE
-        # ==================================================
 
-        if not site_html.lower().startswith(
-            "<!doctype html"
-        ):
-
-            site_html = (
-                "<!DOCTYPE html>\n"
-                + site_html
-            )
-
-        # ==================================================
-        # SALVAR NO BANCO
-        # ==================================================
-
-        agora = datetime.now().isoformat()
-
-        conn = sqlite3.connect("ia.db")
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO sites (
-                usuario_id,
-                nome,
-                prompt,
-                html,
-                css,
-                js,
-                criada_em,
-                atualizada_em
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                session["usuario_id"],
-                nome,
-                prompt,
-                site_html,
-                "",
-                "",
-                agora,
-                agora
-            )
-        )
-
-        site_id = cursor.lastrowid
-
-        conn.commit()
-        conn.close()
-
-        print(
-            f">>> SITE SALVO COM ID {site_id} <<<",
-            flush=True
-        )
-
-        # ==================================================
-        # RETORNAR PARA O FRONTEND
-        # ==================================================
-
-        return jsonify({
-            "sucesso": True,
-            "id": site_id,
-            "nome": nome,
-            "html": site_html,
-            "css": "",
-            "js": ""
-        })
-
-    except Exception as erro:
-
-        print(
-            ">>> ERRO AO GERAR SITE <<<",
-            flush=True
-        )
-
-        print(
-            repr(erro),
-            flush=True
-        )
-
-        return jsonify({
-            "sucesso": False,
-            "erro": (
-                "Erro interno ao gerar o site: "
-                + str(erro)
-            )
-        }), 500
     # -----------------------------------------------------
     # LIMPAR POSSÍVEL MARKDOWN
     # -----------------------------------------------------
